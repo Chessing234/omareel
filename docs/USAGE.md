@@ -124,7 +124,7 @@ auto-generated zoom summary.
 | `Left`, `Right` | Previous/next frame |
 | `Shift+Left`, `Shift+Right` | Back/forward one second |
 | `S` | Split at playhead |
-| `Z` | Add a two-second zoom |
+| `Z` | Add a zoom of up to two seconds at the playhead |
 | `Delete` | Remove the selected time range, selected zooms, or selected clip |
 | `Backspace` | Remove the selected time range |
 | `Ctrl+Z`, `Ctrl+Shift+Z` | Undo/redo |
@@ -135,9 +135,11 @@ The timeline fits the full recording at 1×. Scroll either wheel axis or touchpa
 around the pointer, up to 16×; right-button drag pans the zoomed timeline. The bottom toolbar's
 zoom controls keep the visible center in place. Click or drag
 on the ruler or video row to seek; scrubbing pauses playback. The video row shows frame
-thumbnails sampled from each clip's source interval. Ctrl+click a clip to select it without
-seeking; Ctrl+click it again, click empty video-row space, or press Escape to deselect it.
-Ctrl+drag moves its source window, and the selected clip's edge markers can be dragged to trim.
+thumbnails sampled from each clip's source interval. Clicking a clip also selects it, and
+Ctrl+click selects it without seeking; Ctrl+click it again, click empty video-row space, or press
+Escape to deselect it. Ctrl+drag moves its source window, and the selected clip's trim handles
+can be dragged to trim. Double-click open space in the zoom row to add a zoom there: up to two
+seconds, shortened or moved back to fit before the next zoom.
 Shift+drag on the ruler or video row selects a time range. Drag either orange range handle to
 adjust it and preview that endpoint. Seeking and Space playback stay inside the range; playback
 stops at its end and restarts at its start. Press Delete or Backspace to cut the range and join

@@ -693,6 +693,12 @@ double Editor::sourceToOutput(double sourceTime, int preferredClip) const
     return -1.0;
 }
 
+QPointF Editor::sourceRangeToOutput(double sourceStart, double sourceEnd) const
+{
+    const auto range = ClipTimeline(m_project.clips).outputRange(sourceStart, sourceEnd);
+    return {range.first, range.second};
+}
+
 void Editor::seek(double outputTime)
 {
     if (m_project.clips.isEmpty()) return;
@@ -1170,8 +1176,18 @@ bool Editor::resetClipTrims(const QString &id)
 
 QString Editor::addZoomAt(double outputTime, double length)
 {
-    const double start = std::clamp(outputToSource(outputTime), 0.0, std::max(0.0, m_sourceDuration - 1.0));
-    const double end = std::min(m_sourceDuration, start + std::max(1.0, length));
+    // Zooms never overlap. A new one starts where asked inside the open stretch around that
+    // point, ends early at the next zoom, and backs up when less than a second remains.
+    const double at = std::clamp(outputToSource(outputTime), 0.0, m_sourceDuration);
+    double lower = 0.0;
+    double upper = m_sourceDuration;
+    for (const ZoomSegment &zoom : std::as_const(m_project.zooms)) {
+        if (zoom.start <= at && at < zoom.end) return {};
+        if (zoom.end <= at) lower = std::max(lower, zoom.end);
+        else upper = std::min(upper, zoom.start);
+    }
+    const double end = std::min(upper, at + std::max(1.0, length));
+    const double start = end - at < 1.0 ? std::max(lower, end - 1.0) : at;
     if (end - start < 1.0) return {};
     snapshot();
     ZoomSegment zoom{QStringLiteral("z-%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)), start, end, 2.0, true, {0.5, 0.5}};

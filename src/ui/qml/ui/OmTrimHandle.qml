@@ -9,13 +9,12 @@ Item {
     property bool dragging: false
     property bool debugHovered: false
     property bool debugDragging: false
-    property bool compact: false
     property alias mouseArea: hitArea
     readonly property bool hovered: hitArea.containsMouse || debugHovered
     readonly property bool engaged: dragging || hitArea.pressed || debugDragging
     readonly property bool shown: active || hovered || engaged
 
-    width: compact ? 3 : 14
+    width: 14
     height: parent ? parent.height : 0
     z: 50
 
@@ -23,7 +22,7 @@ Item {
         id: capVisual
         x: 0
         y: 0
-        width: root.width
+        width: 14
         height: root.height
         opacity: root.shown ? 1 : 0
         visible: opacity > 0
@@ -38,7 +37,7 @@ Item {
         Rectangle {
             id: roundedCap
             anchors.fill: parent
-            radius: root.compact ? 0 : theme.radius
+            radius: theme.radius
             color: capVisual.capColor
             Behavior on color {
                 enabled: !editor.loading
@@ -46,7 +45,6 @@ Item {
             }
         }
         Rectangle {
-            visible: !root.compact
             x: root.edge === "left" ? parent.width / 2 : 0
             y: 0
             width: parent.width / 2
@@ -59,7 +57,6 @@ Item {
         }
 
         Rectangle {
-            visible: !root.compact
             anchors.centerIn: parent
             width: root.hovered || root.engaged ? 3 : 2
             height: root.height * (root.hovered || root.engaged ? .60 : .40)
@@ -79,7 +76,7 @@ Item {
     MouseArea {
         id: hitArea
         objectName: root.objectName + "-hit"
-        x: root.edge === "left" ? -6 : root.compact ? -11 : 0
+        x: root.edge === "left" ? -6 : 0
         y: -6
         width: 20
         height: root.height + 12
