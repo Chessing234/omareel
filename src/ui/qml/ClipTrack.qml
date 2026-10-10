@@ -79,6 +79,10 @@ Item {
             property real bodyOriginalIn: 0
             property bool bodyDragged: false
             property bool bodyWasSelected: false
+            function select() {
+                root.clearRangeRequested()
+                editor.selectedClipId = modelData.id
+            }
             function beginBodyDrag(area, mouse) {
                 root.focusTarget.forceActiveFocus()
                 root.clearRangeRequested()
@@ -173,10 +177,14 @@ Item {
                 preventStealing: true
                 property bool movingClip: false
                 property bool selectingRange: false
+                property bool dragged: false
+                property real pressTrackX: 0
                 cursorShape: movingClip ? Qt.ClosedHandCursor : Qt.PointingHandCursor
                 onPressed: mouse => {
                     selectingRange = (mouse.modifiers & Qt.ShiftModifier) !== 0
                     movingClip = !selectingRange && (mouse.modifiers & Qt.ControlModifier) !== 0
+                    dragged = false
+                    pressTrackX = mapToItem(root, mouse.x, mouse.y).x
                     if (selectingRange) root.rangeStarted(root.timeAt(clipBody, mouse))
                     else if (movingClip) clipBlock.beginBodyDrag(clipBody, mouse)
                     else {
@@ -187,6 +195,8 @@ Item {
                 }
                 onPositionChanged: mouse => {
                     if (!pressed) return
+                    if (Math.abs(mapToItem(root, mouse.x, mouse.y).x - pressTrackX) >= 3)
+                        dragged = true
                     if (selectingRange) root.rangeMoved(root.timeAt(clipBody, mouse))
                     else if (movingClip) clipBlock.updateBodyDrag(clipBody, mouse)
                     else root.scrubAt(clipBody, mouse)
@@ -194,7 +204,12 @@ Item {
                 onReleased: mouse => {
                     if (selectingRange) root.rangeFinished(root.timeAt(clipBody, mouse))
                     else if (movingClip) clipBlock.endBodyDrag(clipBody, mouse, "release")
-                    else { root.scrubAt(clipBody, mouse); root.scrubFinished() }
+                    else {
+                        root.scrubAt(clipBody, mouse); root.scrubFinished()
+                        // Dragging scrubs; a click also selects the clip, like a zoom block,
+                        // so its trim handles appear.
+                        if (!dragged) clipBlock.select()
+                    }
                     movingClip = false
                     selectingRange = false
                 }
@@ -284,8 +299,10 @@ Item {
                         selectingRange = false
                     }
                     onClicked: {
-                        if (!dragged && !pressedWithControl && !pressedWithShift)
+                        if (!dragged && !pressedWithControl && !pressedWithShift) {
+                            clipBlock.select()
                             speedMenu.open()
+                        }
                     }
                 }
             }

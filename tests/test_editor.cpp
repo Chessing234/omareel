@@ -925,6 +925,60 @@ private slots:
         QVERIFY(editor.selectedClipId().isEmpty());
     }
 
+    void plainClickSelectsClipAndDragStillScrubs()
+    {
+        QFile::remove(QDir(m_bundle).filePath(QStringLiteral("project.json")));
+        Editor editor(m_bundle);
+        QVERIFY2(editor.isValid(), qPrintable(editor.errorString()));
+        editor.seek(1);
+        QVERIFY(editor.splitAtPlayhead());
+        const QString firstId = editor.clips().first().toMap().value(QStringLiteral("id")).toString();
+        editor.setSelectedClipId(QString());
+        Theme theme;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("editor"), &editor);
+        engine.rootContext()->setContextProperty(QStringLiteral("comp"), &editor);
+        engine.rootContext()->setContextProperty(QStringLiteral("theme"), &theme);
+        QQmlComponent component(&engine);
+        component.setData(R"(
+            import Omareel
+            Main { width: 1200; height: 800; visible: true })", QUrl());
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        std::unique_ptr<QObject> object(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(object.get());
+        QVERIFY(window);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        auto *timeline = window->findChild<QQuickItem *>(QStringLiteral("editorTimeline"));
+        QTRY_VERIFY(timeline);
+        const double pps = timeline->property("pixelsPerSecond").toDouble();
+        const auto scenePoint = [timeline, pps](double time, double y) {
+            return timeline->mapToScene(QPointF(72 + time * pps, y)).toPoint();
+        };
+        std::function<QQuickItem *(QQuickItem *)> findTrim = [&](QQuickItem *item) -> QQuickItem * {
+            if (item->objectName() == QStringLiteral("clipTrimHandle-") + firstId + QStringLiteral("-left"))
+                return item;
+            for (QQuickItem *child : item->childItems())
+                if (QQuickItem *match = findTrim(child)) return match;
+            return nullptr;
+        };
+        auto *trim = findTrim(window->contentItem());
+        QVERIFY(trim);
+
+        // A drag across a clip scrubs and leaves the selection alone.
+        QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, scenePoint(.2, 56));
+        QTest::mouseMove(window, scenePoint(.6, 56), 1);
+        QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, scenePoint(.6, 56));
+        QVERIFY(editor.selectedClipId().isEmpty());
+        QVERIFY(!trim->isVisible());
+        QVERIFY(qAbs(editor.position() - .6) < .03);
+
+        // A click selects the clip, like a zoom block, and its trim handles appear.
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, scenePoint(.4, 56));
+        QCOMPARE(editor.selectedClipId(), firstId);
+        QVERIFY(trim->isVisible());
+        QVERIFY(qAbs(editor.position() - .4) < .03);
+    }
+
     void zoomTrackRubberBandSelectsAndDeletesTwo()
     {
         QFile::remove(QDir(m_bundle).filePath(QStringLiteral("project.json")));
