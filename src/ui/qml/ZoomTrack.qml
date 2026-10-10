@@ -18,12 +18,14 @@ Item {
         property real originX: 0
         property real currentX: 0
         property bool selecting: false
+        property bool addedZoom: false
         onPressed: mouse => {
             editor.traceInput(objectName, "press", mouse.x, mouse.y)
             root.focusTarget.forceActiveFocus()
             originX = mouse.x
             currentX = mouse.x
             selecting = false
+            addedZoom = false
         }
         onPositionChanged: mouse => {
             if (!pressed) return
@@ -38,12 +40,14 @@ Item {
             if (selecting)
                 editor.selectZoomsInOutputRange(Math.min(originX, currentX) / root.pixelsPerSecond,
                                                 Math.max(originX, currentX) / root.pixelsPerSecond)
-            else
+            else if (!addedZoom) // the release ending a double-click keeps the new zoom selected
                 editor.selectedZoomIds = []
             selecting = false
         }
         onCanceled: selecting = false
-        onDoubleClicked: editor.addZoomAt(mouse.x / root.pixelsPerSecond, 2)
+        onDoubleClicked: mouse => {
+            addedZoom = editor.addZoomAt(mouse.x / root.pixelsPerSecond, 2).length > 0
+        }
     }
     Rectangle {
         visible: selectionArea.selecting

@@ -986,7 +986,7 @@ private slots:
         QVERIFY(editor.isValid());
         while (!editor.zooms().isEmpty())
             QVERIFY(editor.removeZoom(editor.zooms().first().toMap().value(QStringLiteral("id")).toString()));
-        QVERIFY(!editor.addZoomAt(0.2, 1.0).isEmpty());
+        QVERIFY(!editor.addZoomAt(0.0, 1.0).isEmpty());
         QVERIFY(!editor.addZoomAt(1.0, 1.0).isEmpty());
         const int originalCount = editor.zooms().size();
 
@@ -1011,8 +1011,9 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(window));
         auto *selectionArea = window->findChild<QQuickItem *>(QStringLiteral("zoomSelectionArea"));
         QTRY_VERIFY(selectionArea);
-        const QPoint start = selectionArea->mapToScene(QPointF(2, selectionArea->height() / 2)).toPoint();
-        const QPoint finish = selectionArea->mapToScene(QPointF(420, selectionArea->height() / 2)).toPoint();
+        // The two zooms fill the 2 s source, so the band starts in the open track after them.
+        const QPoint start = selectionArea->mapToScene(QPointF(590, selectionArea->height() / 2)).toPoint();
+        const QPoint finish = selectionArea->mapToScene(QPointF(2, selectionArea->height() / 2)).toPoint();
         QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, start);
         QTest::mouseMove(window, finish, 20);
         QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, finish);
@@ -1020,6 +1021,46 @@ private slots:
         QCOMPARE(editor.selectedZoomIds().size(), 2);
         QCOMPARE(editor.removeSelectedZooms(), 2);
         QCOMPARE(editor.zooms().size(), originalCount - 2);
+    }
+
+    void doubleClickOnOpenZoomTrackAddsZoom()
+    {
+        QFile::remove(QDir(m_bundle).filePath(QStringLiteral("project.json")));
+        Editor editor(m_bundle);
+        QVERIFY2(editor.isValid(), qPrintable(editor.errorString()));
+        while (!editor.zooms().isEmpty())
+            QVERIFY(editor.removeZoom(editor.zooms().first().toMap().value(QStringLiteral("id")).toString()));
+        // An automatic zoom already covers 1.0–2.0; the open stretch before it is all that's left.
+        const QString existing = editor.addZoomAt(1.0, 1.0);
+        QVERIFY(!existing.isEmpty());
+        QVERIFY(editor.addZoomAt(1.5).isEmpty());
+        Theme theme;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("editor"), &editor);
+        engine.rootContext()->setContextProperty(QStringLiteral("comp"), &editor);
+        engine.rootContext()->setContextProperty(QStringLiteral("theme"), &theme);
+        QQmlComponent component(&engine);
+        component.setData(R"(
+            import Omareel
+            Main { width: 1200; height: 800; visible: true })", QUrl());
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        std::unique_ptr<QObject> object(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(object.get());
+        QVERIFY(window);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        auto *timeline = window->findChild<QQuickItem *>(QStringLiteral("editorTimeline"));
+        QTRY_VERIFY(timeline);
+        const double pps = timeline->property("pixelsPerSecond").toDouble();
+        const QPoint openZoomTrack = timeline->mapToScene(QPointF(72 + .5 * pps, 112)).toPoint();
+
+        // Two seconds from 0.5 would run into the existing zoom, so the new one backs up to fit.
+        QTest::mouseDClick(window, Qt::LeftButton, Qt::NoModifier, openZoomTrack);
+        QTRY_COMPARE(editor.zooms().size(), 2);
+        const QVariantMap zoom = editor.zooms().first().toMap();
+        QVERIFY(zoom.value(QStringLiteral("id")).toString() != existing);
+        QVERIFY(qAbs(zoom.value(QStringLiteral("start")).toDouble()) < .03);
+        QVERIFY(qAbs(zoom.value(QStringLiteral("end")).toDouble() - 1.0) < .001);
+        QCOMPARE(editor.selectedZoomIds(), QStringList{zoom.value(QStringLiteral("id")).toString()});
     }
 
     void cameraOverlayAppliesRotationAndHorizontalFlip()

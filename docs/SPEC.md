@@ -253,7 +253,8 @@ Exporter pipeline (`render/Exporter`):
   ends, split at playhead creates two clips, delete selected clip, drag clip edges; **Zoom
   track** (blue blocks labelled "Zoom 2x · Auto"), drag to move, drag edges to resize, click to
   select → inspector shows level (1.25/1.5/2/2.5/3/4) and target (Auto / pick point on
-  preview), delete key removes, double-click empty area adds a 2 s zoom.
+  preview), delete key removes, double-click empty area adds a zoom of up to 2 s there, fitted
+  before the next zoom (at least 1 s; zooms never overlap) and selected.
   Either wheel axis zooms around the pointer from fit-to-view to 16×; right-button drag pans.
   The 12 px scrollbar stays visible whenever content overflows.
 - Playback: `QMediaPlayer` on screen.mp4, mapping output time ↔ source time through clips;
