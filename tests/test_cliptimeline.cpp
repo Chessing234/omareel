@@ -37,6 +37,29 @@ private slots:
         QCOMPARE(timeline.sourceTime(0.0), 3.5);
     }
 
+    void sourceSpanCoversWhatSurvivesTheCuts()
+    {
+        // Source 1.438–1.903 and everything after 2.245 were cut.
+        ClipTimeline timeline({Clip{"a", 0.0, 1.438, 1.0}, Clip{"b", 1.903, 2.245, 1.0}});
+        const auto across = timeline.outputRange(0.376, 2.583);
+        QCOMPARE(across.first, 0.376);
+        QVERIFY(qAbs(across.second - (1.438 + 2.245 - 1.903)) < 1e-9);
+        const auto endsInCut = timeline.outputRange(0.781, 1.781);
+        QCOMPARE(endsInCut.first, 0.781);
+        QCOMPARE(endsInCut.second, 1.438);
+        const auto startsInCut = timeline.outputRange(1.6, 2.0);
+        QCOMPARE(startsInCut.first, 1.438);
+        QVERIFY(qAbs(startsInCut.second - (1.438 + 2.0 - 1.903)) < 1e-9);
+        const auto allCut = timeline.outputRange(2.3, 2.583);
+        QCOMPARE(allCut.first, -1.0);
+        QCOMPARE(allCut.second, -1.0);
+
+        ClipTimeline faster({Clip{"x", 1.0, 3.0, 2.0}});
+        const auto halved = faster.outputRange(0.0, 2.0);
+        QCOMPARE(halved.first, 0.0);
+        QCOMPARE(halved.second, 0.5);
+    }
+
     void deletesMiddleAndMapsTheNewCut()
     {
         ClipTimeline timeline({Clip{"first", 0.0, 3.0, 1.0}});

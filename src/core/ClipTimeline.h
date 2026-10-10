@@ -2,6 +2,8 @@
 
 #include "Project.h"
 
+#include <QPair>
+
 namespace Omareel {
 
 class ClipTimeline
@@ -12,6 +14,9 @@ public:
     double totalDuration() const;
     double sourceTime(double outputTime) const;
     double outputTime(int clipIndex, double sourceTime) const;
+    // Where a source span plays once cuts are applied, from its first frame still in a clip to
+    // its last; {-1, -1} when all of it was cut.
+    QPair<double, double> outputRange(double sourceStart, double sourceEnd) const;
     bool split(double outputTime);
     bool trim(int index, double newIn, double newOut);
     bool remove(int index);

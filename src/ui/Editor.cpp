@@ -691,6 +691,12 @@ double Editor::sourceToOutput(double sourceTime, int preferredClip) const
     return -1.0;
 }
 
+QPointF Editor::sourceRangeToOutput(double sourceStart, double sourceEnd) const
+{
+    const auto range = ClipTimeline(m_project.clips).outputRange(sourceStart, sourceEnd);
+    return {range.first, range.second};
+}
+
 void Editor::seek(double outputTime)
 {
     if (m_project.clips.isEmpty()) return;

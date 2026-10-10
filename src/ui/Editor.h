@@ -10,6 +10,7 @@
 #include <QJsonObject>
 #include <QMediaPlayer>
 #include <QObject>
+#include <QPointF>
 #include <QPointer>
 #include <QTimer>
 #include <QSet>
@@ -177,6 +178,8 @@ public:
     Q_INVOKABLE void seekBoundary(int direction);
     Q_INVOKABLE double outputToSource(double outputTime) const;
     Q_INVOKABLE double sourceToOutput(double sourceTime, int preferredClip = -1) const;
+    // x/y: output start/end of a source span's surviving part; -1 when all of it was cut.
+    Q_INVOKABLE QPointF sourceRangeToOutput(double sourceStart, double sourceEnd) const;
     Q_INVOKABLE bool splitAtPlayhead();
     Q_INVOKABLE bool moveClip(const QString &id, double sourceIn);
     Q_INVOKABLE bool trimClip(const QString &id, double newIn, double newOut);

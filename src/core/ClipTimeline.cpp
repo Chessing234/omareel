@@ -41,6 +41,21 @@ double ClipTimeline::outputTime(int clipIndex, double source) const
     return output + (std::clamp(source, clip.in, clip.out) - clip.in) / clip.speed;
 }
 
+QPair<double, double> ClipTimeline::outputRange(double sourceStart, double sourceEnd) const
+{
+    QPair<double, double> range{-1.0, -1.0};
+    for (int i = 0; i < m_clips.size(); ++i) {
+        const double from = std::max(sourceStart, m_clips[i].in);
+        const double to = std::min(sourceEnd, m_clips[i].out);
+        if (to <= from) continue;
+        const double outputFrom = outputTime(i, from);
+        const double outputTo = outputTime(i, to);
+        range.first = range.first < 0.0 ? outputFrom : std::min(range.first, outputFrom);
+        range.second = std::max(range.second, outputTo);
+    }
+    return range;
+}
+
 bool ClipTimeline::split(double output)
 {
     double cursor = 0.0;

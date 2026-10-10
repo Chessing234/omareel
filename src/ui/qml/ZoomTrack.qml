@@ -68,14 +68,17 @@ Item {
             objectName: "zoomBlock-" + modelData.id
             required property var modelData
             required property int index
-            property real outputStart: editor.sourceToOutput(modelData.start)
-            property real outputEnd: editor.sourceToOutput(modelData.end)
+            // A zoom whose start or end lies in cut footage still plays over what survives, so
+            // the block covers that part; only a zoom cut away entirely has nothing to show.
+            readonly property point outputRange: editor.sourceRangeToOutput(modelData.start, modelData.end)
+            property real outputStart: outputRange.x
+            property real outputEnd: outputRange.y
             property bool gestureActive: false
             property real gestureX: 0
             property real gestureWidth: 0
             readonly property bool selected: editor.selectedZoomIds.indexOf(modelData.id) >= 0
             z: 1
-            visible: outputStart >= 0 && outputEnd >= 0
+            visible: outputStart >= 0 && outputEnd > outputStart
             x: gestureActive ? gestureX : Math.max(0, outputStart) * root.pixelsPerSecond
             width: gestureActive ? gestureWidth : Math.max(18, (outputEnd-outputStart) * root.pixelsPerSecond)
             height: root.height
