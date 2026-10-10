@@ -311,7 +311,6 @@ Item {
                 objectName: "clipTrimHandle-" + modelData.id + "-left"
                 edge: "left"
                 accent: theme.accent
-                compact: true
                 active: clipBlock.selected
                 visible: clipBlock.selected
                 dragging: mouseArea.pressed
@@ -367,7 +366,6 @@ Item {
                 x: parent.width - width
                 edge: "right"
                 accent: theme.accent
-                compact: true
                 active: clipBlock.selected
                 visible: clipBlock.selected
                 dragging: mouseArea.pressed
