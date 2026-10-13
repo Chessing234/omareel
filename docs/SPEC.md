@@ -467,3 +467,38 @@ the output.
 Preview: the camera player is re-seeked when it drifts more than 250 ms from the screen, or more
 than 80 ms while a camera layout is on screen.
 
+### 9.4 Inserted videos
+
+```jsonc
+{"id":"m-…","in":0.0,"out":14.2,"speed":1.0,"media":"media/demo.mp4","fit":"fit"}  // fit | fill | framed
+```
+
+`media` is bundle-relative and must stay inside `media/` (`sanitizedMediaPath`); a clip whose
+path escapes it is dropped on load. Clips without `media` are pieces of the recording, which stay
+in recording order: a recording clip's in/out move between the nearest recording clips
+(`ClipTimeline::recordingBounds`), an inserted clip's within its video. At least one recording
+clip always remains. Zooms, the motion track, keystrokes and the camera use recording time
+(`ClipTimeline::recordingSourceTime`, which inside an inserted clip is the recording time it
+interrupts), and `outputRange` never maps recording time into an inserted clip.
+
+Inserting probes the file (`render/MediaProbe`: display size after rotation and sample aspect,
+video-stream duration), reflinks it (`FICLONE`) or copies it to `media/.name.part`, renames it
+to a unique name, then splits the clip at the playhead and inserts the new clip under one undo
+snapshot. Undo never deletes media files.
+
+Rendering: `MediaLayer` draws the inserted clip with its own `RoundedFrame` (FrameSource
+`mediaFrameSource`, framed only for `framed`) and, for `fit`, a `BlurredBackdrop`. While it is
+on screen the stage, camera and keystrokes are hidden; for `fit` and `fill` the background too.
+Export decodes each clip from its own file, scaled to cover the output. Audio is one segment
+per clip in output order: the recording (gated by the desktop/mic toggles), the inserted file
+opened at its in point (`-ss in -t length -i`), or `anullsrc` silence; each is resampled to
+48 kHz stereo, tempo-adjusted, padded and trimmed to the clip's exact output length, then
+concatenated. Click sounds skip inserted clips. A missing inserted file fails the export.
+
+Preview: a second `QMediaPlayer` plays inserted clips. `playing` is the transport's state, not a
+player's, so handing playback from one player to the other (the incoming one starts before the
+outgoing one pauses) does not toggle it. While a recording clip is active the inserted clip after
+it is loaded and paused on its first frame, and during an inserted clip the screen player waits
+where the recording resumes. A player's end of media also ends its clip. The media layer stays
+hidden until the loaded file has delivered a frame.
+

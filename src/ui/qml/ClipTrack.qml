@@ -163,7 +163,7 @@ Item {
             Rectangle {
                 anchors.fill: parent
                 z: 2
-                color: "transparent"
+                color: modelData.missing ? Qt.alpha(theme.record, .35) : "transparent"
                 border.width: 1
                 border.color: clipBlock.selected ? theme.accent : theme.normalBorder
                 radius: 0
@@ -244,7 +244,9 @@ Item {
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                     elide: Text.ElideRight
-                    text: (modelData.layout === "camera" ? "Camera"
+                    text: (modelData.kind === "media"
+                           ? (modelData.missing ? "Missing · " : "") + modelData.mediaName
+                           : modelData.layout === "camera" ? "Camera"
                            : modelData.layout === "screen" ? "Screen" : "Clip")
                         + " · " + Number(modelData.speed).toFixed(modelData.speed % 1 ? 2 : 0) + "×"
                     font.weight: Font.Medium
@@ -310,11 +312,12 @@ Item {
             }
             Menu {
                 id: speedMenu
-                width: editor.hasCamera ? 168 : 120
+                readonly property bool layouts: editor.hasCamera && clipBlock.modelData.kind !== "media"
+                width: layouts ? 168 : 120
                 padding: 4
                 background: OmPopupCard { padding: 0 }
                 Repeater {
-                    model: editor.hasCamera ? [{value:"default", label:"Screen & camera"},
+                    model: speedMenu.layouts ? [{value:"default", label:"Screen & camera"},
                         {value:"camera", label:"Camera"}, {value:"screen", label:"Screen"}] : []
                     delegate: MenuItem {
                         required property var modelData
@@ -329,7 +332,7 @@ Item {
                     }
                 }
                 MenuSeparator {
-                    visible: editor.hasCamera
+                    visible: speedMenu.layouts
                     height: visible ? implicitHeight : 0
                     contentItem: Rectangle { implicitHeight: 1; color: theme.hairline }
                 }
@@ -376,7 +379,7 @@ Item {
                 mouseArea.onPositionChanged: mouse => { if (mouseArea.pressed) {
                     editor.traceInput(mouseArea.objectName, "move", mouse.x, mouse.y)
                     const delta = mouseArea.mapToItem(root, mouse.x, mouse.y).x - leftTrim.pressTrackX
-                    const lower = index > 0 ? editor.clips[index - 1].out : 0
+                    const lower = modelData.lower
                     leftTrim.previewIn = Math.max(lower, Math.min(modelData.out - .1,
                         leftTrim.originalIn + delta / root.pixelsPerSecond * modelData.speed))
                     const actualDelta = (leftTrim.previewIn - leftTrim.originalIn)
@@ -431,8 +434,7 @@ Item {
                 mouseArea.onPositionChanged: mouse => { if (mouseArea.pressed) {
                     editor.traceInput(mouseArea.objectName, "move", mouse.x, mouse.y)
                     const delta = mouseArea.mapToItem(root, mouse.x, mouse.y).x - rightTrim.pressTrackX
-                    const upper = index + 1 < editor.clips.length
-                        ? editor.clips[index + 1].in : editor.sourceDuration
+                    const upper = modelData.upper
                     rightTrim.previewOut = Math.max(modelData.in + .1, Math.min(upper,
                         rightTrim.originalOut + delta / root.pixelsPerSecond * modelData.speed))
                     clipBlock.gestureX = rightTrim.pressBlockX

@@ -83,6 +83,18 @@ private slots:
         QCOMPARE(sampleLayout(clips, 2.0, true, true).bubble, 0.0);
     }
 
+    void insertedVideosCutInAndOut()
+    {
+        Clip insert = clip("m", 0, 1, "default");
+        insert.media = QStringLiteral("media/demo.mp4");
+        const QVector<Clip> clips{clip("a", 0, 1, "camera"), insert, clip("b", 1, 3, "default")};
+        // No camera during the insert, and the clip after it starts on its own layout.
+        QCOMPARE(sampleLayout(clips, 1.1, true, true).cameraFull, 0.0);
+        QCOMPARE(sampleLayout(clips, 1.1, true, true).bubble, 0.0);
+        QCOMPARE(sampleLayout(clips, 2.0, true, true).bubble, 1.0);
+        QCOMPARE(sampleLayout(clips, 2.0, true, true).cameraFull, 0.0);
+    }
+
     void pastTheEndHoldsTheLastLayout()
     {
         const QVector<Clip> clips{clip("a", 0, 1, "default"), clip("b", 1, 3, "camera")};

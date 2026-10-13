@@ -9,6 +9,7 @@ Item {
     readonly property alias videoOutput: frame.videoOutput
     readonly property alias cameraFrameSource: cameraOverlay.cameraFrameSource
     readonly property alias cameraVideoOutput: cameraOverlay.cameraVideoOutput
+    readonly property alias mediaVideoOutput: mediaLayer.videoOutput
     property bool nativePreview: false
     width: comp.outputWidth
     height: comp.outputHeight
@@ -32,13 +33,17 @@ Item {
     readonly property bool cameraShown: comp.cameraAvailable && comp.cameraVisible
     // How far the current clip's layout has grown the camera to full frame.
     readonly property real cameraFull: cameraShown ? comp.layout.cameraFull : 0
-    // Once the camera covers the canvas, nothing beneath it needs drawing.
-    readonly property bool screenCovered: cameraFull >= 1
+    // An inserted video replaces the recording, its camera and keys while it plays.
+    readonly property bool mediaActive: comp.media.active
+    // Once the camera or an inserted video covers the canvas, nothing beneath needs drawing.
+    readonly property bool screenCovered: cameraFull >= 1 || mediaActive
+    readonly property bool backgroundCovered: cameraFull >= 1
+        || (mediaActive && comp.media.ready && comp.media.fit !== "framed")
     clip: true
 
     Background {
         anchors.fill: parent
-        visible: !composition.screenCovered
+        visible: !composition.backgroundCovered
         settings: comp.project.background
         softwareRendering: comp.softwareRendering
     }
@@ -86,7 +91,8 @@ Item {
     }
     CameraOverlay {
         id: cameraOverlay
-        visible: composition.cameraShown && (composition.cameraFull > 0 || comp.layout.bubble > 0)
+        visible: composition.cameraShown && !composition.mediaActive
+            && (composition.cameraFull > 0 || comp.layout.bubble > 0)
         settings: comp.project.camera
         fullProgress: composition.cameraFull
         bubbleOpacity: comp.layout.bubble
@@ -95,6 +101,20 @@ Item {
         outputHeight: composition.height
         sourceWidth: comp.cameraSourceWidth
         sourceHeight: comp.cameraSourceHeight
+        softwareRendering: comp.softwareRendering
+        nativePreview: composition.nativePreview
+    }
+    MediaLayer {
+        id: mediaLayer
+        anchors.fill: parent
+        visible: composition.mediaActive
+        // The preview holds the layer back until the clip's first frame, so the last frame of
+        // an earlier clip never flashes.
+        opacity: comp.media.ready ? 1 : 0
+        media: comp.media
+        frameSettings: comp.project.frame
+        padding: composition.pad
+        ref: composition.ref
         softwareRendering: comp.softwareRendering
         nativePreview: composition.nativePreview
     }

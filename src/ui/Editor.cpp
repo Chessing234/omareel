@@ -31,7 +31,12 @@
 #include <QtConcurrent>
 #include <algorithm>
 #include <cmath>
+#include <fcntl.h>
 #include <limits>
+#include <linux/fs.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#include <utility>
 
 using namespace Omareel;
 
@@ -198,6 +203,62 @@ bool buildVideoThumbnail(const QString &videoPath, const QString &filter, const 
     return true;
 }
 
+// A reflink shares the original's blocks until either file changes: instant, and free on btrfs
+// and xfs. Elsewhere the file is copied.
+bool cloneOrCopy(const QString &from, const QString &to, QString *error)
+{
+    const int source = ::open(QFile::encodeName(from).constData(), O_RDONLY | O_CLOEXEC);
+    if (source >= 0) {
+        const int target = ::open(QFile::encodeName(to).constData(),
+                                  O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+        const bool cloned = target >= 0 && ::ioctl(target, FICLONE, source) == 0;
+        if (target >= 0) ::close(target);
+        ::close(source);
+        if (cloned) return true;
+    }
+    QFile::remove(to);
+    if (QFile::copy(from, to)) return true;
+    if (error) *error = QStringLiteral("Could not copy %1 into the recording").arg(QFileInfo(from).fileName());
+    return false;
+}
+
+// Runs off the GUI thread: probes a video and brings it into the bundle's media/ directory.
+Editor::ImportedInsert importInsert(const QString &source, const QString &bundlePath)
+{
+    Editor::ImportedInsert result;
+    result.info = probeVideo(source, &result.error);
+    if (!result.info.isValid()) return result;
+    const QDir media(QDir(bundlePath).filePath(QStringLiteral("media")));
+    const QFileInfo file(source);
+    // A video already in this bundle is used where it is.
+    if (media.exists() && QFileInfo(file.canonicalPath()) == QFileInfo(media.canonicalPath())
+        && !sanitizedMediaPath(QStringLiteral("media/") + file.fileName()).isEmpty()) {
+        result.path = QStringLiteral("media/") + file.fileName();
+        return result;
+    }
+    if (!media.exists() && !QDir().mkpath(media.path())) {
+        result.error = QStringLiteral("Could not create %1").arg(media.path());
+        return result;
+    }
+    QString base = file.completeBaseName();
+    base.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9 _.-]")), QStringLiteral("_"));
+    while (base.startsWith(QLatin1Char('.'))) base.remove(0, 1);
+    if (base.isEmpty()) base = QStringLiteral("clip");
+    const QString suffix = file.suffix().isEmpty() ? QString()
+        : QLatin1Char('.') + file.suffix().toLower();
+    QString name = base + suffix;
+    for (int n = 2; media.exists(name); ++n) name = QStringLiteral("%1-%2%3").arg(base).arg(n).arg(suffix);
+    const QString partial = media.filePath(QLatin1Char('.') + name + QStringLiteral(".part"));
+    if (!cloneOrCopy(source, partial, &result.error)) return result;
+    if (!QFile::rename(partial, media.filePath(name))) {
+        QFile::remove(partial);
+        result.error = QStringLiteral("Could not add %1 to the recording").arg(name);
+        return result;
+    }
+    result.path = QStringLiteral("media/") + name;
+    return result;
+}
+
 } // namespace
 
 Editor::Editor(const QString &bundlePath, QObject *parent)
@@ -250,39 +311,43 @@ Editor::Editor(const QString &bundlePath, QObject *parent)
         if (status == QMediaPlayer::LoadedMedia || status == QMediaPlayer::BufferedMedia
             || status == QMediaPlayer::EndOfMedia || status == QMediaPlayer::InvalidMedia)
             QTimer::singleShot(0, this, &Editor::finishLoading);
+        // The video can end a little before the clip's out point; the clip is over either way.
+        if (status == QMediaPlayer::EndOfMedia && playing() && !clipIsMedia(m_activeClip))
+            QTimer::singleShot(0, this, &Editor::advanceClip);
     });
     m_player.setSource(QUrl::fromLocalFile(m_videoPath));
+    m_mediaAudioOutput = std::make_unique<QAudioOutput>();
+    m_mediaPlayer.setAudioOutput(m_mediaAudioOutput.get());
+    connect(&m_mediaPlayer, &QMediaPlayer::mediaStatusChanged, this,
+            [this](QMediaPlayer::MediaStatus status) {
+        if ((status == QMediaPlayer::LoadedMedia || status == QMediaPlayer::BufferedMedia)
+            && m_pendingMediaSeekMs >= 0) {
+            const qint64 target = std::exchange(m_pendingMediaSeekMs, -1);
+            seekPlayer(m_mediaPlayer, target, m_pendingMediaWillPlay);
+            if (playing() && clipIsMedia(m_activeClip)) m_mediaPlayer.play();
+        }
+        if (status == QMediaPlayer::EndOfMedia && playing() && clipIsMedia(m_activeClip))
+            QTimer::singleShot(0, this, &Editor::advanceClip);
+    });
+    connect(&m_importWatcher, &QFutureWatcher<ImportedInsert>::finished, this, &Editor::finishImport);
     m_previewTimer.setTimerType(Qt::PreciseTimer);
     m_previewTimer.setInterval(16);
     connect(&m_previewTimer, &QTimer::timeout, this, [this] {
-        handlePlayerPosition(m_player.position());
+        // While an inserted clip's file is still opening, its player has no position yet.
+        const bool insert = clipIsMedia(m_activeClip);
+        if (!insert || (m_pendingMediaSeekMs < 0
+                        && m_mediaPlayer.mediaStatus() >= QMediaPlayer::LoadedMedia))
+            handlePlayerPosition(playerFor(m_activeClip).position());
         updatePlayheadPosition();
     });
     m_previewStatsEnabled = qEnvironmentVariableIntValue("OMAREEL_PREVIEW_STATS") == 1;
     if (m_previewStatsEnabled) QTextStream(stderr) << "preview stats enabled\n";
     m_previewStatsTimer.setInterval(1000);
     connect(&m_previewStatsTimer, &QTimer::timeout, this, &Editor::handlePreviewStats);
-    connect(&m_player, &QMediaPlayer::playbackStateChanged, this, [this] {
-        if (m_previewStatsEnabled)
+    if (m_previewStatsEnabled)
+        connect(&m_player, &QMediaPlayer::playbackStateChanged, this, [this] {
             QTextStream(stderr) << "preview state=" << int(m_player.playbackState()) << '\n';
-        if (playing()) {
-            resetPlayheadClock(m_outputPosition);
-            m_previewTimer.start();
-            if (m_previewStatsEnabled) {
-                m_previewStatsFrames = 0;
-                m_previewStatsCostNs = 0;
-                m_previewStatsClock.restart();
-                m_previewStatsTimer.start();
-            }
-        } else {
-            m_previewTimer.stop();
-            m_previewStatsTimer.stop();
-            m_playheadClock.invalidate();
-            setPlayheadPosition(m_outputPosition);
-        }
-        emit playingChanged();
-        if (!playing()) startNextVideoThumbnail();
-    });
+        });
     if (m_hasCamera) {
         m_cameraPlayer.setSource(QUrl::fromLocalFile(m_cameraVideoPath));
     }
@@ -300,6 +365,7 @@ Editor::~Editor()
     m_motionWatcher.waitForFinished();
     m_cameraThumbnailWatcher.waitForFinished();
     m_videoThumbnailWatcher.waitForFinished();
+    m_importWatcher.waitForFinished();
     cancelExport();
 }
 
@@ -354,7 +420,13 @@ bool Editor::loadBundle()
         m_project.camera.flipHorizontal = cameraCapture
             .value(QStringLiteral("flipHorizontal")).toBool(false);
     }
-    if (m_project.clips.isEmpty()) m_project.clips = {Clip{QStringLiteral("c1"), 0.0, m_sourceDuration, 1.0}};
+    if (std::none_of(m_project.clips.cbegin(), m_project.clips.cend(),
+                     [](const Clip &clip) { return !clip.isMedia(); }))
+        m_project.clips.prepend(Clip{QStringLiteral("c1"), 0.0, m_sourceDuration, 1.0});
+    // A missing inserted video keeps its clip; it shows as missing and blocks export.
+    for (const Clip &clip : std::as_const(m_project.clips))
+        if (clip.isMedia() && !m_inserts.contains(clip.media))
+            m_inserts.insert(clip.media, probeVideo(QDir(m_bundlePath).filePath(clip.media)));
     m_project.audio.desktop = m_project.audio.desktop && m_hasDesktopAudio;
     m_project.audio.mic = m_project.audio.mic && m_hasMicrophoneAudio;
     m_input = InputLog::loadBundle(m_bundlePath, m_sourceDuration, &m_error);
@@ -388,13 +460,30 @@ QVariantMap Editor::projectMap() const
     }
     background[QStringLiteral("resolvedImage")] = image.isEmpty() ? QString() : QUrl::fromLocalFile(image).toString();
     result[QStringLiteral("background")] = background;
-    // project.json leaves default layouts out; QML reads every clip's layout.
+    // project.json leaves default layouts out; QML reads every clip's layout. kind, lower and
+    // upper (how far its in and out may move), mediaName and missing are for the timeline only.
     QVariantList clips = result.value(QStringLiteral("clips")).toList();
-    for (QVariant &value : clips) {
-        QVariantMap clip = value.toMap();
+    const ClipTimeline timeline(m_project.clips);
+    for (int i = 0; i < clips.size() && i < m_project.clips.size(); ++i) {
+        const Clip &source = m_project.clips[i];
+        QVariantMap clip = clips[i].toMap();
         if (!clip.contains(QStringLiteral("layout")))
             clip.insert(QStringLiteral("layout"), QStringLiteral("default"));
-        value = clip;
+        if (source.isMedia()) {
+            const VideoInfo info = m_inserts.value(source.media);
+            clip.insert(QStringLiteral("kind"), QStringLiteral("media"));
+            clip.insert(QStringLiteral("lower"), 0.0);
+            clip.insert(QStringLiteral("upper"), info.isValid() ? info.duration : source.out);
+            clip.insert(QStringLiteral("mediaName"), QFileInfo(source.media).fileName());
+            clip.insert(QStringLiteral("missing"), !info.isValid());
+        } else {
+            const auto bounds = timeline.recordingBounds(i, m_sourceDuration);
+            clip.insert(QStringLiteral("kind"), QStringLiteral("recording"));
+            clip.insert(QStringLiteral("lower"), bounds.first);
+            clip.insert(QStringLiteral("upper"), bounds.second);
+            clip.insert(QStringLiteral("missing"), false);
+        }
+        clips[i] = clip;
     }
     result[QStringLiteral("clips")] = clips;
     m_projectMapCache = result;
@@ -413,7 +502,7 @@ QVariantList Editor::zooms() const
 }
 
 double Editor::duration() const { return ClipTimeline(m_project.clips).totalDuration(); }
-bool Editor::playing() const { return m_player.playbackState() == QMediaPlayer::PlayingState; }
+bool Editor::playing() const { return m_transportPlaying; }
 
 int Editor::outputWidth() const
 {
@@ -448,19 +537,37 @@ QVariantMap Editor::previewLayout() const
             {QStringLiteral("bubble"), layout.bubble}};
 }
 
+QVariantMap Editor::previewMedia() const
+{
+    const int index = clipForOutput(m_outputPosition);
+    if (!clipIsMedia(index))
+        return {{QStringLiteral("active"), false}, {QStringLiteral("ready"), true},
+                {QStringLiteral("fit"), QStringLiteral("fit")}, {QStringLiteral("width"), 16},
+                {QStringLiteral("height"), 9}, {QStringLiteral("missing"), false}};
+    const Clip &clip = m_project.clips[index];
+    const VideoInfo info = m_inserts.value(clip.media);
+    return {{QStringLiteral("active"), true},
+            {QStringLiteral("ready"), m_mediaFrameReady && m_mediaPlayerSource == clip.media},
+            {QStringLiteral("fit"), clip.fit}, {QStringLiteral("width"), std::max(1, info.width)},
+            {QStringLiteral("height"), std::max(1, info.height)},
+            {QStringLiteral("missing"), !info.isValid()}};
+}
+
 QVariantMap Editor::previewCursor() const
 {
-    const MotionSample s = m_motion ? m_motion->sample(sourcePosition()) : MotionSample{};
+    const bool insert = clipIsMedia(clipForOutput(m_outputPosition));
+    const MotionSample s = m_motion && !insert ? m_motion->sample(sourcePosition()) : MotionSample{};
     return {{QStringLiteral("x"), s.cursorX}, {QStringLiteral("y"), s.cursorY},
-        {QStringLiteral("visible"), m_project.cursor.visible}, {QStringLiteral("scale"), s.cursorScale},
+        {QStringLiteral("visible"), m_project.cursor.visible && !insert}, {QStringLiteral("scale"), s.cursorScale},
         {QStringLiteral("opacity"), s.cursorOpacity}, {QStringLiteral("rotation"), s.cursorRotation}};
 }
 
 QVariantList Editor::previewRipples() const
 {
     QVariantList result;
-    if (!m_motion || (m_project.cursor.clickEffect != QLatin1String("ripple")
-                      && m_project.cursor.clickEffect != QLatin1String("circle"))) return result;
+    if (!m_motion || clipIsMedia(clipForOutput(m_outputPosition))
+        || (m_project.cursor.clickEffect != QLatin1String("ripple")
+            && m_project.cursor.clickEffect != QLatin1String("circle"))) return result;
     for (const auto &r : m_motion->ripples(sourcePosition()))
         result << QVariantMap{{QStringLiteral("x"), r.x}, {QStringLiteral("y"), r.y}, {QStringLiteral("progress"), r.progress}};
     return result;
@@ -469,6 +576,7 @@ QVariantList Editor::previewRipples() const
 QVariantList Editor::previewKeystrokePills() const
 {
     QVariantList result;
+    if (clipIsMedia(clipForOutput(m_outputPosition))) return result;
     for (const KeystrokePill &pill : m_keystrokeTrack.sample(sourcePosition()))
         result << QVariantMap{{QStringLiteral("keys"), pill.keys},
             {QStringLiteral("text"), pill.text}, {QStringLiteral("opacity"), pill.opacity}};
@@ -477,7 +585,7 @@ QVariantList Editor::previewKeystrokePills() const
 
 bool Editor::cameraVisible() const
 {
-    if (!m_hasCamera) return false;
+    if (!m_hasCamera || clipIsMedia(clipForOutput(m_outputPosition))) return false;
     const CameraTime mapped = mapCameraTime(sourcePosition(), m_cameraOffset, m_cameraDuration);
     // A full-frame camera holds its first frame until the camera started instead of leaving
     // the frame empty.
@@ -495,7 +603,8 @@ void Editor::attachVideoOutput(QObject *output)
             ++m_previewStatsFrames;
             if (playing() && !m_warmingPreview && !m_scrubbing && !m_internalSeek
                 && frame.isValid() && frame.startTime() >= 0
-                && m_activeClip >= 0 && m_activeClip < m_project.clips.size()) {
+                && m_activeClip >= 0 && m_activeClip < m_project.clips.size()
+                && !clipIsMedia(m_activeClip)) {
                 const Clip &clip = m_project.clips[m_activeClip];
                 const double source = frame.startTime() / 1000000.0;
                 const double output = sourceToOutput(source, m_activeClip);
@@ -513,7 +622,8 @@ void Editor::attachVideoOutput(QObject *output)
                     // play() may have taken over since this frame arrived.
                     if (!m_warmingPreview) return;
                     m_warmingPreview = false;
-                    pause();
+                    m_player.pause();
+                    m_cameraPlayer.pause();
                     // The decoder may have advanced a frame or two during warm-up; re-seek so
                     // the paused frame is the one the playhead points at.
                     m_internalSeek = true;
@@ -544,6 +654,187 @@ void Editor::attachCameraVideoOutput(QObject *output)
         m_warmingCameraPreview = true;
         m_cameraPlayer.play();
     }
+}
+
+void Editor::attachMediaVideoOutput(QObject *output)
+{
+    m_mediaVideoSink = output ? output->property("videoSink").value<QVideoSink *>() : nullptr;
+    m_mediaPlayer.setVideoSink(m_mediaVideoSink);
+    if (!m_mediaVideoSink) return;
+    connect(m_mediaVideoSink, &QVideoSink::videoFrameChanged, this, [this](const QVideoFrame &frame) {
+        if (!frame.isValid()) return;
+        if (!m_mediaFrameReady) {
+            m_mediaFrameReady = true;
+            updatePreview();
+        }
+        if (playing() && clipIsMedia(m_activeClip) && !m_warmingMediaPreview && !m_scrubbing
+            && !m_internalSeek && frame.startTime() >= 0) {
+            const Clip &clip = m_project.clips[m_activeClip];
+            const double source = frame.startTime() / 1000000.0;
+            const double output = sourceToOutput(source, m_activeClip);
+            if (source >= clip.in - 0.01 && source < clip.out
+                && output >= m_outputPosition - 0.1 && output <= m_outputPosition + 0.5) {
+                m_playheadClockPosition = std::max(m_playheadPosition, output);
+                m_playheadClock.restart();
+            }
+        }
+        if (m_warmingMediaPreview) {
+            QTimer::singleShot(0, this, [this] {
+                if (!m_warmingMediaPreview) return;
+                m_warmingMediaPreview = false;
+                if (!(playing() && clipIsMedia(m_activeClip))) {
+                    m_mediaPlayer.pause();
+                    m_internalSeek = true;
+                    m_mediaPlayer.setPosition(m_mediaWarmTargetMs);
+                    m_internalSeek = false;
+                }
+                updateInsertAudio();
+            });
+        }
+    });
+    if (clipIsMedia(m_activeClip)) seekMedia(m_outputPosition);
+}
+
+bool Editor::clipIsMedia(int index) const
+{
+    return index >= 0 && index < m_project.clips.size() && m_project.clips[index].isMedia();
+}
+
+VideoInfo Editor::insertInfo(const QString &path)
+{
+    if (!m_inserts.contains(path))
+        m_inserts.insert(path, probeVideo(QDir(m_bundlePath).filePath(path)));
+    return m_inserts.value(path);
+}
+
+QMediaPlayer &Editor::playerFor(int clipIndex)
+{
+    return clipIsMedia(clipIndex) ? m_mediaPlayer : m_player;
+}
+
+void Editor::setTransportPlaying(bool value)
+{
+    if (m_transportPlaying == value) return;
+    m_transportPlaying = value;
+    if (value) {
+        resetPlayheadClock(m_outputPosition);
+        m_previewTimer.start();
+        if (m_previewStatsEnabled) {
+            m_previewStatsFrames = 0;
+            m_previewStatsCostNs = 0;
+            m_previewStatsClock.restart();
+            m_previewStatsTimer.start();
+        }
+    } else {
+        m_previewTimer.stop();
+        m_previewStatsTimer.stop();
+        m_playheadClock.invalidate();
+        setPlayheadPosition(m_outputPosition);
+    }
+    updateInsertAudio();
+    emit playingChanged();
+    if (!value) startNextVideoThumbnail();
+}
+
+void Editor::seekPlayer(QMediaPlayer &player, qint64 milliseconds, bool willPlay)
+{
+    const bool insert = &player == &m_mediaPlayer;
+    // An inserted clip's file may still be opening; the seek waits for it.
+    if (insert && (player.mediaStatus() == QMediaPlayer::NoMedia
+                   || player.mediaStatus() == QMediaPlayer::LoadingMedia)) {
+        m_pendingMediaSeekMs = milliseconds;
+        m_pendingMediaWillPlay = willPlay;
+        return;
+    }
+    // A player already paused on this exact frame (loaded ahead of its clip) keeps it; seeking
+    // again would flush the frame it shows. Anything further off, a frame step included, seeks.
+    if (player.playbackState() == QMediaPlayer::PausedState
+        && player.mediaStatus() != QMediaPlayer::EndOfMedia
+        && std::abs(player.position() - milliseconds) <= 1
+        && (!insert || m_mediaFrameReady)) return;
+    // After the player has run off the end it sits in EndOfMedia/Stopped, where a bare
+    // setPosition() does not decode a frame, so scrubbing keeps showing the last (black)
+    // frame. play() on a Stopped player restarts from 0 and drops any pending seek, so move to
+    // Paused first (play+pause leaves the position alone), seek, then, unless it is about to
+    // play anyway, let the decoder run until the sink reports one frame at the new position
+    // and pause on that frame. (Calling play() and pause() back to back does not work: it
+    // flushes the sink without decoding.)
+    const bool stalled = player.mediaStatus() == QMediaPlayer::EndOfMedia
+        || player.playbackState() == QMediaPlayer::StoppedState;
+    if (!stalled) {
+        player.setPosition(milliseconds);
+        return;
+    }
+    player.play();
+    player.pause();
+    player.setPosition(milliseconds);
+    if (willPlay) return;
+    bool &warming = insert ? m_warmingMediaPreview : m_warmingPreview;
+    if (insert) m_mediaWarmTargetMs = milliseconds;
+    warming = true;
+    updateInsertAudio();
+    player.play();
+    // Safety net in case the sink never reports a frame (no video output attached).
+    QTimer::singleShot(250, this, [this, &player, &warming] {
+        if (!warming) return;
+        warming = false;
+        if (!(playing() && &playerFor(m_activeClip) == &player)) player.pause();
+        updateInsertAudio();
+    });
+}
+
+void Editor::loadInsert(const QString &path)
+{
+    if (m_mediaPlayerSource == path) return;
+    m_mediaPlayerSource = path;
+    m_mediaFrameReady = false;
+    m_pendingMediaSeekMs = -1;
+    m_warmingMediaPreview = false;
+    m_mediaPlayer.setSource(QUrl::fromLocalFile(QDir(m_bundlePath).filePath(path)));
+    updatePreview();
+}
+
+void Editor::prepareNextClip()
+{
+    const int next = m_activeClip + 1;
+    if (m_activeClip < 0 || next >= m_project.clips.size()) return;
+    const Clip &clip = m_project.clips[next];
+    const qint64 target = qRound64(clip.in * 1000.0);
+    if (!clipIsMedia(m_activeClip) && clip.isMedia()) {
+        // The inserted clip after this one opens and waits on its first frame, so the cut to it
+        // is immediate.
+        if (m_mediaPlayerSource == clip.media && m_mediaFrameReady
+            && m_mediaPlayer.playbackState() == QMediaPlayer::PausedState
+            && std::abs(m_mediaPlayer.position() - target) <= 1) return;
+        loadInsert(clip.media);
+        m_mediaPlayer.setPlaybackRate(clip.speed);
+        seekPlayer(m_mediaPlayer, target, false);
+    } else if (clipIsMedia(m_activeClip) && !clip.isMedia()
+               && m_player.playbackState() != QMediaPlayer::PlayingState) {
+        // Likewise the screen waits where the recording resumes.
+        m_player.setPlaybackRate(clip.speed);
+        seekPlayer(m_player, target, false);
+    }
+}
+
+void Editor::advanceClip()
+{
+    if (!playing()) return;
+    if (m_activeClip + 1 < m_project.clips.size()) {
+        seek(ClipTimeline(m_project.clips).outputTime(m_activeClip + 1,
+                                                      m_project.clips[m_activeClip + 1].in));
+    } else {
+        pause();
+        setOutputPosition(duration());
+    }
+}
+
+void Editor::updateInsertAudio()
+{
+    if (!m_mediaAudioOutput) return;
+    m_mediaAudioOutput->setVolume(std::clamp(m_project.audio.volume, 0.0, 1.0));
+    // Silent while it decodes ahead of its clip or warms up on a paused frame.
+    m_mediaAudioOutput->setMuted(m_warmingMediaPreview || !clipIsMedia(m_activeClip));
 }
 
 QString Editor::cameraStatus() const
@@ -587,6 +878,7 @@ void Editor::changed(bool motion)
         m_audioOutput->setVolume(std::clamp(m_project.audio.volume, 0.0, 1.0));
         m_audioOutput->setMuted(!m_project.audio.desktop && !m_project.audio.mic);
     }
+    updateInsertAudio();
     if (!m_dirty) { m_dirty = true; emit dirtyChanged(); }
     m_autosaveTimer.start();
     emit projectChanged();
@@ -711,15 +1003,17 @@ int Editor::clipForOutput(double output, double *clipOutputStart) const
 
 double Editor::outputToSource(double outputTime) const
 {
-    return ClipTimeline(m_project.clips).sourceTime(std::clamp(outputTime, 0.0, duration()));
+    return ClipTimeline(m_project.clips).recordingSourceTime(std::clamp(outputTime, 0.0, duration()));
 }
 
 double Editor::sourceToOutput(double sourceTime, int preferredClip) const
 {
+    // preferredClip maps the clip's own time, which for an inserted clip is the video's.
     if (preferredClip >= 0 && preferredClip < m_project.clips.size())
         return ClipTimeline(m_project.clips).outputTime(preferredClip, sourceTime);
     for (int i = 0; i < m_project.clips.size(); ++i)
-        if (sourceTime >= m_project.clips[i].in && sourceTime <= m_project.clips[i].out)
+        if (!m_project.clips[i].isMedia()
+            && sourceTime >= m_project.clips[i].in && sourceTime <= m_project.clips[i].out)
             return ClipTimeline(m_project.clips).outputTime(i, sourceTime);
     return -1.0;
 }
@@ -777,6 +1071,9 @@ QString Editor::clipThumbnailUrl(const QString &clipId, double sourceTime, doubl
                                  double sourceEnd)
 {
     const int index = clipIndex(clipId);
+    if (index >= 0 && m_project.clips[index].isMedia())
+        return thumbnailUrl(QStringLiteral("media:") + m_project.clips[index].media, sourceTime,
+                            sourceStart, sourceEnd);
     if (index < 0 || !m_hasCamera || m_project.clips[index].layout != QLatin1String("camera"))
         return videoThumbnailUrlForClip(sourceTime, sourceStart, sourceEnd);
     // The camera runs m_cameraOffset behind the screen. Before it started, the preview holds its
@@ -822,6 +1119,14 @@ Editor::ThumbnailSource *Editor::thumbnailSource(const QString &key)
         source.fps = m_cameraFps > 0.0 ? m_cameraFps : 30.0;
         source.cacheDirectory = thumbnailCacheDirectory(m_cameraVideoPath,
                                                         QLatin1Char('-') + key);
+    } else if (key.startsWith(QLatin1String("media:"))) {
+        const QString path = key.mid(6);
+        const VideoInfo info = insertInfo(path);
+        if (!info.isValid()) return nullptr;
+        source.videoPath = QDir(m_bundlePath).filePath(path);
+        source.duration = info.duration;
+        source.fps = info.fps;
+        source.cacheDirectory = thumbnailCacheDirectory(source.videoPath, {});
     } else {
         return nullptr;
     }
@@ -969,35 +1274,28 @@ void Editor::seekMedia(double outputTime)
     double clipStart = 0.0;
     const int clipIndex = clipForOutput(outputTime, &clipStart);
     const auto &clip = m_project.clips[clipIndex];
-    const double source = clip.in + (outputTime - clipStart) * clip.speed;
+    const double source = std::clamp(clip.in + (outputTime - clipStart) * clip.speed, clip.in, clip.out);
+    const qint64 targetMs = qRound64(source * 1000.0);
     m_internalSeek = true;
-    m_player.setPlaybackRate(clip.speed);
-    const qint64 targetMs = qRound64(std::clamp(source, clip.in, clip.out) * 1000.0);
-    // After the player has run off the end it sits in EndOfMedia/Stopped, where a bare
-    // setPosition() does not decode a frame, so scrubbing keeps showing the last (black)
-    // frame. Seek first, then briefly run the decoder and pause it as soon as the sink has
-    // delivered a frame at the new position. (Calling play() and pause() back to back does
-    // not work: it flushes the sink without decoding.)
-    const bool stalled = m_player.mediaStatus() == QMediaPlayer::EndOfMedia
-        || m_player.playbackState() == QMediaPlayer::StoppedState;
-    if (stalled) {
-        // play() on a Stopped player restarts from 0 and drops any pending seek, so move to
-        // Paused first (play+pause leaves the position alone), seek, then let the decoder run
-        // until the sink reports one frame at the new position and pause on that frame.
-        m_player.play();
+    // While playing, the clip's player starts before the other stops, so the picture never
+    // waits on a paused pair.
+    if (clip.isMedia()) {
+        loadInsert(clip.media);
+        m_mediaPlayer.setPlaybackRate(clip.speed);
+        seekPlayer(m_mediaPlayer, targetMs, playing());
+        if (playing()) m_mediaPlayer.play();
         m_player.pause();
-        m_player.setPosition(targetMs);
-        m_warmingPreview = true;
-        m_player.play();
-        // Safety net in case the sink never reports a frame (no video output attached).
-        QTimer::singleShot(250, this, [this] {
-            if (m_warmingPreview) { m_warmingPreview = false; m_player.pause(); }
-        });
+        m_cameraPlayer.pause();
     } else {
-        m_player.setPosition(targetMs);
+        m_player.setPlaybackRate(clip.speed);
+        seekPlayer(m_player, targetMs, playing());
+        if (playing()) m_player.play();
+        m_mediaPlayer.pause();
+        syncCamera(source, true);
     }
-    syncCamera(source, true);
+    updateInsertAudio();
     m_internalSeek = false;
+    prepareNextClip();
 }
 
 void Editor::playPause() { playing() ? pause() : play(); }
@@ -1012,13 +1310,26 @@ void Editor::play()
     // The opening preview, or a seek from a stalled player, may still be warming up; its pause
     // on the first decoded frame must not stop playback asked for in the meantime.
     m_warmingPreview = false;
-    m_player.play();
-    syncCamera(sourcePosition(), true);
+    m_warmingMediaPreview = false;
+    m_activeClip = clipForOutput(m_outputPosition);
+    setTransportPlaying(true);
+    if (clipIsMedia(m_activeClip)) {
+        m_mediaPlayer.play();
+        m_player.pause();
+    } else {
+        m_player.play();
+        m_mediaPlayer.pause();
+        syncCamera(sourcePosition(), true);
+    }
+    updateInsertAudio();
+    prepareNextClip();
 }
 void Editor::pause()
 {
+    setTransportPlaying(false);
     m_player.pause();
     m_cameraPlayer.pause();
+    m_mediaPlayer.pause();
 }
 
 void Editor::stepFrames(int frames)
@@ -1042,14 +1353,10 @@ void Editor::handlePlayerPosition(qint64 milliseconds)
         seek(m_playbackRangeEnd);
         return;
     }
-    syncCamera(source);
     const Clip &clip = m_project.clips[std::clamp(m_activeClip, 0, int(m_project.clips.size()) - 1)];
+    if (!clip.isMedia()) syncCamera(source);
     if (playing() && source >= clip.out - 0.004) {
-        if (m_activeClip + 1 < m_project.clips.size()) {
-            double nextOutput = ClipTimeline(m_project.clips).outputTime(m_activeClip + 1, m_project.clips[m_activeClip + 1].in);
-            seek(nextOutput);
-            m_player.play();
-        } else { pause(); setOutputPosition(duration()); }
+        advanceClip();
         return;
     }
     if (mapped >= 0.0) {
@@ -1128,14 +1435,22 @@ bool Editor::splitAtPlayhead()
     return true;
 }
 
+QPair<double, double> Editor::clipBounds(int index)
+{
+    const Clip &clip = m_project.clips[index];
+    if (!clip.isMedia()) return ClipTimeline(m_project.clips).recordingBounds(index, m_sourceDuration);
+    const VideoInfo info = insertInfo(clip.media);
+    return {0.0, info.isValid() ? info.duration : clip.out};
+}
+
 bool Editor::moveClip(const QString &id, double sourceIn)
 {
     const int index = clipIndex(id);
     if (index < 0) return false;
     const double length = m_project.clips[index].out - m_project.clips[index].in;
-    const double lower = index > 0 ? m_project.clips[index - 1].out : 0.0;
-    const double upper = (index + 1 < m_project.clips.size()
-        ? m_project.clips[index + 1].in : m_sourceDuration) - length;
+    const auto bounds = clipBounds(index);
+    const double lower = bounds.first;
+    const double upper = bounds.second - length;
     const double nextIn = std::clamp(sourceIn, lower, std::max(lower, upper));
     if (qFuzzyCompare(nextIn + 1.0, m_project.clips[index].in + 1.0)) return true;
     snapshot(m_coalesceKey.isEmpty() ? QStringLiteral("move-clip-") + id : m_coalesceKey);
@@ -1149,8 +1464,7 @@ bool Editor::trimClip(const QString &id, double newIn, double newOut)
 {
     const int index = clipIndex(id);
     if (index < 0) return false;
-    const double lower = index > 0 ? m_project.clips[index - 1].out : 0.0;
-    const double upper = index + 1 < m_project.clips.size() ? m_project.clips[index + 1].in : m_sourceDuration;
+    const auto [lower, upper] = clipBounds(index);
     newIn = std::clamp(newIn, lower, upper);
     newOut = std::clamp(newOut, lower, upper);
     if (newOut - newIn < 0.1) return false;
@@ -1173,6 +1487,10 @@ bool Editor::removeClip(const QString &id)
 {
     const int index = clipIndex(id);
     if (index < 0 || m_project.clips.size() <= 1) return false;
+    // The recording always keeps at least one clip.
+    if (!m_project.clips[index].isMedia()
+        && std::count_if(m_project.clips.cbegin(), m_project.clips.cend(),
+                         [](const Clip &clip) { return !clip.isMedia(); }) <= 1) return false;
     snapshot();
     m_project.clips.removeAt(index);
     m_selectedClipId = m_project.clips[std::min(index, int(m_project.clips.size()) - 1)].id;
@@ -1192,6 +1510,8 @@ bool Editor::deleteOutputRange(double from, double to)
     const QString remainderId = QStringLiteral("c-%1").arg(
         QUuid::createUuid().toString(QUuid::WithoutBraces));
     if (!edited.deleteRange(from, to, remainderId)) return false;
+    if (std::none_of(edited.clips().cbegin(), edited.clips().cend(),
+                     [](const Clip &clip) { return !clip.isMedia(); })) return false;
 
     pause();
     snapshot();
@@ -1199,6 +1519,7 @@ bool Editor::deleteOutputRange(double from, double to)
         double first = std::numeric_limits<double>::infinity();
         double last = -std::numeric_limits<double>::infinity();
         for (const Clip &clip : clips) {
+            if (clip.isMedia()) continue;
             const double start = std::max(zoom.start, clip.in);
             const double end = std::min(zoom.end, clip.out);
             if (end - start <= 1e-9) continue;
@@ -1239,6 +1560,8 @@ bool Editor::mergeClip(const QString &id, int direction)
     const int index = clipIndex(id);
     const int other = index + (direction < 0 ? -1 : 1);
     if (index < 0 || other < 0 || other >= m_project.clips.size()) return false;
+    // Only pieces of the recording join; an inserted clip has nothing to join across.
+    if (m_project.clips[index].isMedia() || m_project.clips[other].isMedia()) return false;
     snapshot();
     const int first = std::min(index, other), second = std::max(index, other);
     m_project.clips[first].out = m_project.clips[second].out;
@@ -1263,7 +1586,8 @@ bool Editor::setClipSpeed(const QString &id, double speed)
 bool Editor::setClipLayout(const QString &id, const QString &layout)
 {
     const int index = clipIndex(id);
-    if (index < 0 || !allowedClipLayouts().contains(layout)) return false;
+    if (index < 0 || !allowedClipLayouts().contains(layout) || m_project.clips[index].isMedia())
+        return false;
     if (m_project.clips[index].layout == layout) return true;
     snapshot();
     m_project.clips[index].layout = layout;
@@ -1273,13 +1597,106 @@ bool Editor::setClipLayout(const QString &id, const QString &layout)
     return true;
 }
 
+bool Editor::setClipFit(const QString &id, const QString &fit)
+{
+    const int index = clipIndex(id);
+    if (index < 0 || !m_project.clips[index].isMedia() || !allowedClipFits().contains(fit))
+        return false;
+    if (m_project.clips[index].fit == fit) return true;
+    snapshot();
+    m_project.clips[index].fit = fit;
+    changed(false);
+    return true;
+}
+
+bool Editor::reorderClip(const QString &id, int direction)
+{
+    const int index = clipIndex(id);
+    const int other = index + (direction < 0 ? -1 : 1);
+    // Recording clips keep their order; only an inserted clip moves past its neighbour.
+    if (index < 0 || other < 0 || other >= m_project.clips.size()
+        || !m_project.clips[index].isMedia()) return false;
+    pause();
+    snapshot();
+    m_project.clips.swapItemsAt(index, other);
+    m_selectedClipId = id;
+    changed(false);
+    seek(ClipTimeline(m_project.clips).outputTime(other, m_project.clips[other].in));
+    emit selectionChanged();
+    return true;
+}
+
+void Editor::insertMedia(const QUrl &url)
+{
+    if (!m_valid || m_importing) return;
+    const QString source = url.isLocalFile() ? url.toLocalFile() : url.toString();
+    if (source.isEmpty()) return;
+    pause();
+    m_importing = true;
+    m_importError.clear();
+    emit importingChanged();
+    m_importWatcher.setFuture(QtConcurrent::run(importInsert, source, m_bundlePath));
+}
+
+void Editor::clearImportError()
+{
+    if (m_importError.isEmpty()) return;
+    m_importError.clear();
+    emit importingChanged();
+}
+
+void Editor::finishImport()
+{
+    const ImportedInsert imported = m_importWatcher.result();
+    m_importing = false;
+    if (!imported.error.isEmpty()) {
+        m_importError = imported.error;
+        emit importingChanged();
+        return;
+    }
+    m_inserts.insert(imported.path, imported.info);
+    // The new clip goes at the playhead: before a clip it starts, after one it ends, or between
+    // the two halves of the clip it splits.
+    const double at = std::clamp(m_outputPosition, 0.0, duration());
+    double clipStart = 0.0;
+    const int index = clipForOutput(at, &clipStart);
+    snapshot();
+    int insertAt = m_project.clips.size();
+    if (index >= 0) {
+        const Clip clip = m_project.clips[index];
+        const double source = clip.in + (at - clipStart) * clip.speed;
+        if (source - clip.in < 0.1) {
+            insertAt = index;
+        } else {
+            insertAt = index + 1;
+            if (clip.out - source >= 0.1) {
+                Clip left = clip, right = clip;
+                left.out = source;
+                right.in = source;
+                right.id = QStringLiteral("c-%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+                m_project.clips[index] = left;
+                m_project.clips.insert(index + 1, right);
+            }
+        }
+    }
+    Clip insert{QStringLiteral("m-%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)),
+                0.0, imported.info.duration, 1.0};
+    insert.media = imported.path;
+    m_project.clips.insert(insertAt, insert);
+    m_selectedClipId = insert.id;
+    m_selectedZoomId.clear();
+    m_selectedZoomIds.clear();
+    changed(false);
+    seek(ClipTimeline(m_project.clips).outputTime(insertAt, 0.0));
+    emit selectionChanged();
+    emit importingChanged();
+}
+
 bool Editor::resetClipTrims(const QString &id)
 {
     const int index = clipIndex(id);
     if (index < 0) return false;
-    const double newIn = index > 0 ? m_project.clips[index - 1].out : 0.0;
-    const double newOut = index + 1 < m_project.clips.size()
-        ? m_project.clips[index + 1].in : m_sourceDuration;
+    const auto [newIn, newOut] = clipBounds(index);
     if (newOut - newIn < 0.1) return false;
     snapshot();
     m_project.clips[index].in = newIn;
@@ -1292,6 +1709,8 @@ QString Editor::addZoomAt(double outputTime, double length)
 {
     // Zooms never overlap. A new one starts where asked inside the open stretch around that
     // point, ends early at the next zoom, and backs up when less than a second remains.
+    // Inserted clips have no recording to zoom into.
+    if (clipIsMedia(clipForOutput(std::clamp(outputTime, 0.0, duration())))) return {};
     const double at = std::clamp(outputToSource(outputTime), 0.0, m_sourceDuration);
     double lower = 0.0;
     double upper = m_sourceDuration;

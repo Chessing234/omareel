@@ -125,6 +125,7 @@ auto-generated zoom summary.
 | `Shift+Left`, `Shift+Right` | Back/forward one second |
 | `S` | Split at playhead |
 | `Z` | Add a zoom of up to two seconds at the playhead |
+| `I` | Insert a video at the playhead |
 | `Delete` | Remove the selected time range, selected zooms, or selected clip |
 | `Backspace` | Remove the selected time range |
 | `Ctrl+Z`, `Ctrl+Shift+Z` | Undo/redo |
@@ -161,10 +162,27 @@ clips look: **Fill frame** covers the whole canvas with the uncropped webcam, an
 keeps a centred square over a blurred copy of the camera. Camera clips show the webcam even with
 the bubble switched off.
 
+## Inserted videos
+
+Press `I`, click the film button beside the scissors, or use **Insert video at playhead** in the
+Clip panel to add a video file (MP4, MOV, MKV, WebM) to the timeline: a demo, a retake, or a
+clip exported from another Omareel recording. The video is copied into the bundle's `media/`
+directory (reflinked where the filesystem allows, so it takes no extra space) and placed at the
+playhead, splitting the clip there. Inserted clips play with their own sound, cut in and out
+without a transition, and show no cursor, zooms, keystrokes, or camera.
+
+Select an inserted clip to choose how it meets the frame: **Fit** shows all of it over a blurred
+copy of itself, **Fill** covers the frame, and **Framed** places it in the frame over the
+background, like the screen. Trim, split, speed, and delete work as for other clips; **Move
+earlier** and **Move later** move it past its neighbour. Recording clips keep their order. If an
+inserted video goes missing from `media/`, its clip is marked Missing and export stops until it
+is restored or deleted.
+
 ## Project bundle
 
 The bundle directory contains `screen.mp4`, its `screen.mp4.ts` first-frame timestamp,
-`capture.json`, `input.jsonl`, `project.json`, and `thumb.jpg`. Video remains unchanged while
+`capture.json`, `input.jsonl`, `project.json`, `thumb.jpg`, and `media/` with any inserted
+videos. Video remains unchanged while
 clip, style, cursor, and zoom edits are stored in `project.json`.
 
 ## Environment

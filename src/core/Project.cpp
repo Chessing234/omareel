@@ -1,5 +1,6 @@
 #include "Project.h"
 
+#include <QDir>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -34,6 +35,21 @@ QVector<double> Omareel::allowedClipSpeeds()
 QStringList Omareel::allowedClipLayouts()
 {
     return {QStringLiteral("default"), QStringLiteral("camera"), QStringLiteral("screen")};
+}
+
+QStringList Omareel::allowedClipFits()
+{
+    return {QStringLiteral("fit"), QStringLiteral("fill"), QStringLiteral("framed")};
+}
+
+QString Omareel::sanitizedMediaPath(const QString &path)
+{
+    if (path.isEmpty() || QDir::isAbsolutePath(path) || path.contains(QLatin1Char('\\')))
+        return {};
+    const QString clean = QDir::cleanPath(path);
+    if (!clean.startsWith(QLatin1String("media/"))
+        || clean.split(QLatin1Char('/')).contains(QLatin1String(".."))) return {};
+    return clean;
 }
 
 QStringList Omareel::allowedAspects()
@@ -127,6 +143,14 @@ Project Project::fromJson(const QJsonObject &root)
                   o.value("out").toDouble(), o.value("speed").toDouble(1.0)};
         const QString layout = o.value("layout").toString();
         if (allowedClipLayouts().contains(layout)) clip.layout = layout;
+        // A media path that leaves media/ is dropped with its clip rather than read as footage
+        // of the recording.
+        if (o.contains("media")) {
+            clip.media = sanitizedMediaPath(o.value("media").toString());
+            if (clip.media.isEmpty()) continue;
+            const QString fit = o.value("fit").toString();
+            if (allowedClipFits().contains(fit)) clip.fit = fit;
+        }
         p.clips << clip;
     }
     p.zooms.clear();
@@ -279,6 +303,10 @@ QJsonObject Project::toJson() const
         QJsonObject clip{{"id", c.id}, {"in", c.in}, {"out", c.out}, {"speed", c.speed}};
         // Clips that keep the default layout stay as they were written before layouts existed.
         if (c.layout != QLatin1String("default")) clip.insert("layout", c.layout);
+        if (c.isMedia()) {
+            clip.insert("media", c.media);
+            clip.insert("fit", c.fit);
+        }
         clipArray << clip;
     }
     QJsonArray zoomArray;

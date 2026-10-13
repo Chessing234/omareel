@@ -151,6 +151,7 @@ ApplicationWindow {
     Shortcut { sequence: "Shift+Right"; enabled: !window.singleKeyShortcutsBlocked; onActivated: editor.seek(editor.position + 1) }
     Shortcut { sequence: "S"; enabled: !window.singleKeyShortcutsBlocked; onActivated: editor.splitAtPlayhead() }
     Shortcut { sequence: "Z"; enabled: !window.singleKeyShortcutsBlocked; onActivated: editor.addZoomAt(editor.position) }
+    Shortcut { sequence: "I"; enabled: !window.singleKeyShortcutsBlocked; onActivated: bottomBar.openInsertDialog() }
     Shortcut {
         sequence: "Delete"
         enabled: !window.singleKeyShortcutsBlocked

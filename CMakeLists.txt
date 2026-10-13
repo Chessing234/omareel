@@ -102,6 +102,7 @@ set_source_files_properties(
     src/ui/qml/CursorOverlay.qml
     src/ui/qml/CameraOverlay.qml
     src/ui/qml/BlurredBackdrop.qml
+    src/ui/qml/MediaLayer.qml
     src/ui/qml/KeystrokeOverlay.qml
     src/ui/qml/Main.qml
     src/ui/qml/TopBar.qml
@@ -126,6 +127,7 @@ set_source_files_properties(
     src/ui/qml/CameraPanel.qml
     src/ui/qml/KeystrokesPanel.qml
     src/ui/qml/ExportDialog.qml
+    src/ui/qml/InsertClipDialog.qml
     src/ui/qml/Timeline.qml
     src/ui/qml/ClipTrack.qml
     src/ui/qml/ZoomTrack.qml
@@ -139,7 +141,8 @@ set_source_files_properties(src/ui/qml/RoundedFrame.qml PROPERTIES QT_RESOURCE_A
 set_source_files_properties(src/ui/qml/CursorOverlay.qml PROPERTIES QT_RESOURCE_ALIAS "CursorOverlay.qml")
 set_source_files_properties(src/ui/qml/CameraOverlay.qml PROPERTIES QT_RESOURCE_ALIAS "CameraOverlay.qml")
 set_source_files_properties(src/ui/qml/BlurredBackdrop.qml PROPERTIES QT_RESOURCE_ALIAS "BlurredBackdrop.qml")
-foreach(qml_name IN ITEMS Main TopBar PreviewPane BottomBar SidePanel PanelSlider PanelLabel PanelHeading PanelValue IconToolButton EditorButton EditorSlider EditorSwitch EditorComboBox BackgroundPanel ShapePanel CursorPanel ZoomPanel AudioPanel ClipPanel CameraPanel KeystrokesPanel ExportDialog Timeline ClipTrack ZoomTrack Launcher RecordingBar)
+set_source_files_properties(src/ui/qml/MediaLayer.qml PROPERTIES QT_RESOURCE_ALIAS "MediaLayer.qml")
+foreach(qml_name IN ITEMS Main TopBar PreviewPane BottomBar SidePanel PanelSlider PanelLabel PanelHeading PanelValue IconToolButton EditorButton EditorSlider EditorSwitch EditorComboBox BackgroundPanel ShapePanel CursorPanel ZoomPanel AudioPanel ClipPanel CameraPanel KeystrokesPanel ExportDialog InsertClipDialog Timeline ClipTrack ZoomTrack Launcher RecordingBar)
     set_source_files_properties(src/ui/qml/${qml_name}.qml PROPERTIES QT_RESOURCE_ALIAS "${qml_name}.qml")
 endforeach()
 qt_add_qml_module(omareel_render
@@ -150,6 +153,7 @@ qt_add_qml_module(omareel_render
     SOURCES
         src/render/FrameSource.h src/render/FrameSource.cpp
         src/render/FfmpegDecoder.h src/render/FfmpegDecoder.cpp
+        src/render/MediaProbe.h src/render/MediaProbe.cpp
         src/render/Exporter.h src/render/Exporter.cpp
         src/render/EncoderPipe.h src/render/EncoderPipe.cpp
         src/render/PreviewSink.h src/render/PreviewSink.cpp
@@ -164,6 +168,7 @@ qt_add_qml_module(omareel_render
         src/ui/qml/CursorOverlay.qml
         src/ui/qml/CameraOverlay.qml
         src/ui/qml/BlurredBackdrop.qml
+        src/ui/qml/MediaLayer.qml
         src/ui/qml/KeystrokeOverlay.qml
         src/ui/qml/Main.qml
         src/ui/qml/TopBar.qml
@@ -188,6 +193,7 @@ qt_add_qml_module(omareel_render
         src/ui/qml/CameraPanel.qml
         src/ui/qml/KeystrokesPanel.qml
         src/ui/qml/ExportDialog.qml
+        src/ui/qml/InsertClipDialog.qml
         src/ui/qml/Timeline.qml
         src/ui/qml/ClipTrack.qml
         src/ui/qml/ZoomTrack.qml

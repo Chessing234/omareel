@@ -102,6 +102,51 @@ private slots:
         QCOMPARE(fallback.camera.fullFrame, QStringLiteral("fill"));
     }
 
+    void insertedVideosStayInsideTheBundle()
+    {
+        QCOMPARE(sanitizedMediaPath(QStringLiteral("media/demo.mp4")), QStringLiteral("media/demo.mp4"));
+        QCOMPARE(sanitizedMediaPath(QStringLiteral("media/./demo.mp4")), QStringLiteral("media/demo.mp4"));
+        QCOMPARE(sanitizedMediaPath(QStringLiteral("media/talk..final.mp4")),
+                 QStringLiteral("media/talk..final.mp4"));
+        QCOMPARE(sanitizedMediaPath(QStringLiteral("/home/demo.mp4")), QString());
+        QCOMPARE(sanitizedMediaPath(QStringLiteral("media/../screen.mp4")), QString());
+        QCOMPARE(sanitizedMediaPath(QStringLiteral("media/../../etc/passwd")), QString());
+        QCOMPARE(sanitizedMediaPath(QStringLiteral("demo.mp4")), QString());
+        QCOMPARE(sanitizedMediaPath(QString()), QString());
+
+        Project project = Project::defaults(QStringLiteral("Inserts"), 4.0);
+        Clip insert{QStringLiteral("m"), 0.5, 2.0, 1.0};
+        insert.media = QStringLiteral("media/demo.mp4");
+        insert.fit = QStringLiteral("framed");
+        project.clips << insert;
+        const QJsonObject written = project.toJson().value("clips").toArray().last().toObject();
+        QCOMPARE(written.value("media").toString(), QStringLiteral("media/demo.mp4"));
+        QCOMPARE(written.value("fit").toString(), QStringLiteral("framed"));
+        QVERIFY(!project.toJson().value("clips").toArray().first().toObject().contains("media"));
+        const Project loaded = Project::fromJson(project.toJson());
+        QCOMPARE(loaded.clips.size(), 2);
+        QVERIFY(!loaded.clips[0].isMedia());
+        QVERIFY(loaded.clips[1].isMedia());
+        QCOMPARE(loaded.clips[1].fit, QStringLiteral("framed"));
+        QCOMPARE(loaded.toJson(), project.toJson());
+
+        // An escaping path drops the clip instead of turning it into recording footage; an
+        // unknown fit falls back to fit.
+        QJsonObject json = project.toJson();
+        QJsonArray clips = json.value("clips").toArray();
+        QJsonObject escaping = clips[1].toObject();
+        escaping.insert(QStringLiteral("media"), QStringLiteral("../outside.mp4"));
+        QJsonObject oddFit = clips[1].toObject();
+        oddFit.insert(QStringLiteral("fit"), QStringLiteral("stretch"));
+        clips[1] = escaping;
+        clips << oddFit;
+        json.insert(QStringLiteral("clips"), clips);
+        const Project guarded = Project::fromJson(json);
+        QCOMPARE(guarded.clips.size(), 2);
+        QVERIFY(guarded.clips[1].isMedia());
+        QCOMPARE(guarded.clips[1].fit, QStringLiteral("fit"));
+    }
+
     void migratesLegacyInsetToBorder()
     {
         const Project migrated = Project::fromJson(QJsonObject{

@@ -8,7 +8,7 @@ using namespace Omareel;
 
 static LayoutSample target(const Clip &clip, bool cameraAvailable, bool bubbleEnabled)
 {
-    if (!cameraAvailable) return {0.0, 0.0};
+    if (!cameraAvailable || clip.isMedia()) return {0.0, 0.0};
     if (clip.layout == QLatin1String("camera")) return {1.0, 0.0};
     if (clip.layout == QLatin1String("screen")) return {0.0, 0.0};
     return {0.0, bubbleEnabled ? 1.0 : 0.0};
@@ -26,7 +26,8 @@ LayoutSample Omareel::sampleLayout(const QVector<Clip> &clips, double outputTime
         const LayoutSample next = target(clip, cameraAvailable, bubbleEnabled);
         if (outputTime < start + length || i == clips.size() - 1) {
             const double span = std::min(transition, length);
-            if (i == 0 || span <= 0.0) return next;
+            // Inserted videos cut in and out; only recording clips morph between layouts.
+            if (i == 0 || span <= 0.0 || clip.isMedia() || clips[i - 1].isMedia()) return next;
             const double progress = Easing::easeInOutCubic((outputTime - start) / span);
             return {previous.cameraFull + (next.cameraFull - previous.cameraFull) * progress,
                     previous.bubble + (next.bubble - previous.bubble) * progress};

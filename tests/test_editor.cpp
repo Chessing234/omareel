@@ -1,10 +1,12 @@
 #include "ui/Editor.h"
+#include "core/Project.h"
 #include "core/Theme.h"
 #include "render/VideoDecoding.h"
 
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QProcess>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -1380,7 +1382,198 @@ private slots:
         QCOMPARE(half->property("opacity").toDouble(), .5);
     }
 
+    void insertedVideosSplitTheTimelineAndKeepTheirFile()
+    {
+        const QString bundle = plainBundle(QStringLiteral("inserts.omareel"));
+        const QString demo = m_temporary.filePath(QStringLiteral("My Demo.mp4"));
+        QVERIFY(makeVideo(demo, QStringLiteral("testsrc2=size=320x240:rate=30"), 0.7));
+        Editor editor(bundle);
+        QVERIFY2(editor.isValid(), qPrintable(editor.errorString()));
+        const auto clip = [&](int index) { return editor.clips().at(index).toMap(); };
+        const auto insertAndWait = [&](const QString &path) {
+            editor.insertMedia(QUrl::fromLocalFile(path));
+            QTRY_VERIFY_WITH_TIMEOUT(!editor.importing(), 15000);
+        };
+
+        editor.seek(1.0);
+        insertAndWait(demo);
+        QVERIFY2(editor.importError().isEmpty(), qPrintable(editor.importError()));
+        QCOMPARE(editor.clips().size(), 3);
+        QCOMPARE(clip(0).value("out").toDouble(), 1.0);
+        QCOMPARE(clip(1).value("kind").toString(), QStringLiteral("media"));
+        QCOMPARE(clip(1).value("media").toString(), QStringLiteral("media/My Demo.mp4"));
+        QCOMPARE(clip(1).value("mediaName").toString(), QStringLiteral("My Demo.mp4"));
+        QVERIFY(qAbs(clip(1).value("out").toDouble() - 0.7) < 0.05);
+        QCOMPARE(clip(2).value("in").toDouble(), 1.0);
+        QVERIFY(QFileInfo(QDir(bundle).filePath(QStringLiteral("media/My Demo.mp4"))).isFile());
+        QCOMPARE(editor.selectedClipId(), clip(1).value("id").toString());
+        QCOMPARE(editor.position(), 1.0);
+        QVERIFY(qAbs(editor.duration() - 2.7) < 0.05);
+        QVERIFY(editor.previewMedia().value("active").toBool());
+        QVERIFY(!editor.cameraVisible());
+        QVERIFY(editor.addZoomAt(1.2).isEmpty());
+
+        // Recording clips stay in recording order across the insert, which has its own bounds.
+        const QString left = clip(0).value("id").toString();
+        const QString insert = clip(1).value("id").toString();
+        const QString right = clip(2).value("id").toString();
+        QCOMPARE(clip(2).value("lower").toDouble(), 1.0);
+        QVERIFY(editor.trimClip(right, 0.5, 2.0));
+        QCOMPARE(clip(2).value("in").toDouble(), 1.0);
+        QVERIFY(editor.trimClip(insert, 0.2, 5.0));
+        QVERIFY(qAbs(clip(1).value("out").toDouble() - 0.7) < 0.05);
+        QVERIFY(editor.resetClipTrims(insert));
+        QCOMPARE(clip(1).value("in").toDouble(), 0.0);
+        QVERIFY(!editor.reorderClip(left, 1));
+        QVERIFY(!editor.mergeClip(left, 1));
+        QVERIFY(!editor.setClipLayout(insert, QStringLiteral("camera")));
+        QVERIFY(editor.setClipFit(insert, QStringLiteral("framed")));
+        QCOMPARE(clip(1).value("fit").toString(), QStringLiteral("framed"));
+        QVERIFY(!editor.setClipFit(left, QStringLiteral("fill")));
+
+        QVERIFY(editor.reorderClip(insert, -1));
+        QCOMPARE(clip(0).value("id").toString(), insert);
+        QCOMPARE(editor.position(), 0.0);
+        QVERIFY(!editor.reorderClip(insert, -1));
+        QVERIFY(editor.removeClip(left));
+        QVERIFY(!editor.removeClip(right));
+
+        // Undo walks every step back to the recording alone; the copied video stays for redo.
+        while (editor.canUndo()) editor.undo();
+        QCOMPARE(editor.clips().size(), 1);
+        QVERIFY(QFileInfo(QDir(bundle).filePath(QStringLiteral("media/My Demo.mp4"))).isFile());
+        editor.redo();
+        QCOMPARE(editor.clips().size(), 3);
+        QCOMPARE(clip(1).value("kind").toString(), QStringLiteral("media"));
+
+        // The same file again gets its own name; something that is not a video is refused.
+        editor.seek(2.69);
+        insertAndWait(demo);
+        QCOMPARE(editor.clips().size(), 4);
+        QCOMPARE(clip(3).value("media").toString(), QStringLiteral("media/My Demo-2.mp4"));
+        const QString text = m_temporary.filePath(QStringLiteral("notes.txt"));
+        QFile notes(text);
+        QVERIFY(notes.open(QIODevice::WriteOnly));
+        notes.write("not a video");
+        notes.close();
+        insertAndWait(text);
+        QVERIFY(!editor.importError().isEmpty());
+        QCOMPARE(editor.clips().size(), 4);
+        editor.clearImportError();
+        QVERIFY(editor.importError().isEmpty());
+    }
+
+    void missingInsertedVideoStillOpens()
+    {
+        const QString bundle = plainBundle(QStringLiteral("missing-insert.omareel"));
+        Project project = Project::defaults(QStringLiteral("Missing"), 2.0);
+        Clip gone{QStringLiteral("m"), 0.0, 1.0, 1.0};
+        gone.media = QStringLiteral("media/gone.mp4");
+        project.clips << gone;
+        QString error;
+        QVERIFY2(project.save(QDir(bundle).filePath(QStringLiteral("project.json")), &error), qPrintable(error));
+        Editor editor(bundle);
+        QVERIFY2(editor.isValid(), qPrintable(editor.errorString()));
+        QCOMPARE(editor.clips().size(), 2);
+        QVERIFY(editor.clips().at(1).toMap().value("missing").toBool());
+        editor.seek(2.5);
+        QVERIFY(editor.previewMedia().value("active").toBool());
+        QVERIFY(editor.previewMedia().value("missing").toBool());
+    }
+
+    void playbackCrossesIntoAnInsertedVideoAndBack()
+    {
+        const QString bundle = plainBundle(QStringLiteral("insert-playback.omareel"));
+        QVERIFY(QDir(bundle).mkpath(QStringLiteral("media")));
+        QVERIFY(makeVideo(QDir(bundle).filePath(QStringLiteral("media/demo.mp4")),
+                          QStringLiteral("testsrc2=size=320x240:rate=30"), 1.0));
+        Project project = Project::defaults(QStringLiteral("Playback"), 2.0);
+        Clip insert{QStringLiteral("m"), 0.2, 0.8, 1.0};
+        insert.media = QStringLiteral("media/demo.mp4");
+        project.clips = {Clip{QStringLiteral("a"), 0.0, 0.6, 1.0}, insert,
+                         Clip{QStringLiteral("b"), 0.6, 1.4, 1.0}};
+        QString error;
+        QVERIFY2(project.save(QDir(bundle).filePath(QStringLiteral("project.json")), &error), qPrintable(error));
+
+        Editor editor(bundle);
+        QVERIFY2(editor.isValid(), qPrintable(editor.errorString()));
+        QVideoSink sink;
+        QVideoSink mediaSink;
+        QObject holder;
+        QObject mediaHolder;
+        holder.setProperty("videoSink", QVariant::fromValue(&sink));
+        mediaHolder.setProperty("videoSink", QVariant::fromValue(&mediaSink));
+        editor.attachVideoOutput(&holder);
+        editor.attachMediaVideoOutput(&mediaHolder);
+        QTRY_VERIFY_WITH_TIMEOUT(editor.playerMediaStatusForTests() >= QMediaPlayer::LoadedMedia, 15000);
+        editor.seek(0.3);
+        // The insert after the playhead loads ahead and waits on its first frame.
+        QTRY_VERIFY_WITH_TIMEOUT(editor.mediaPlaybackStateForTests() == QMediaPlayer::PausedState, 5000);
+        QSignalSpy playingChanges(&editor, &Editor::playingChanged);
+        editor.play();
+        QTRY_VERIFY_WITH_TIMEOUT(editor.position() > 0.75, 5000);
+        QVERIFY(editor.position() < 1.2);
+        QVERIFY(editor.previewMedia().value("active").toBool());
+        QCOMPARE(editor.mediaPlaybackStateForTests(), QMediaPlayer::PlayingState);
+        QCOMPARE(editor.playerPlaybackStateForTests(), QMediaPlayer::PausedState);
+        QTRY_VERIFY(editor.previewMedia().value("ready").toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(editor.position() > 1.4, 5000);
+        QVERIFY(!editor.previewMedia().value("active").toBool());
+        QCOMPARE(editor.playerPlaybackStateForTests(), QMediaPlayer::PlayingState);
+        QCOMPARE(editor.mediaPlaybackStateForTests(), QMediaPlayer::PausedState);
+        QTRY_VERIFY_WITH_TIMEOUT(!editor.playing(), 5000);
+        QVERIFY(qAbs(editor.position() - editor.duration()) < 0.01);
+        // Handing playback between players did not flicker the transport.
+        QCOMPARE(playingChanges.count(), 2);
+
+        // Seeking back into the insert while paused shows it again.
+        editor.seek(0.9);
+        QVERIFY(editor.previewMedia().value("active").toBool());
+        QTRY_VERIFY(editor.previewMedia().value("ready").toBool());
+        QVERIFY(!editor.playing());
+    }
+
+    void frameStepsMoveThePausedPlayer()
+    {
+        QFile::remove(QDir(m_bundle).filePath(QStringLiteral("project.json")));
+        Editor editor(m_bundle);
+        QVERIFY2(editor.isValid(), qPrintable(editor.errorString()));
+        QVideoSink sink;
+        QObject holder;
+        holder.setProperty("videoSink", QVariant::fromValue(&sink));
+        editor.attachVideoOutput(&holder);
+        QTRY_VERIFY_WITH_TIMEOUT(editor.playerMediaStatusForTests() >= QMediaPlayer::LoadedMedia, 15000);
+        editor.seek(0.5);
+        QTRY_COMPARE_WITH_TIMEOUT(editor.playerPlaybackStateForTests(), QMediaPlayer::PausedState, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(editor.playerPositionMsForTests(), qint64(500), 2000);
+        // One frame at 30 fps is 33 ms; each step must reach the player, not just the playhead.
+        editor.stepFrames(1);
+        QTRY_COMPARE_WITH_TIMEOUT(editor.playerPositionMsForTests(), qint64(533), 2000);
+        editor.stepFrames(-1);
+        QTRY_COMPARE_WITH_TIMEOUT(editor.playerPositionMsForTests(), qint64(500), 2000);
+    }
+
 private:
+    bool makeVideo(const QString &path, const QString &source, double seconds)
+    {
+        QProcess process;
+        process.start(QStringLiteral("ffmpeg"), {QStringLiteral("-y"), QStringLiteral("-v"), QStringLiteral("error"),
+            QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"), source,
+            QStringLiteral("-t"), QString::number(seconds), QStringLiteral("-c:v"), QStringLiteral("libx264"),
+            QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"), path});
+        return process.waitForFinished(30000) && process.exitCode() == 0;
+    }
+
+    QString plainBundle(const QString &name)
+    {
+        const QString bundle = m_temporary.filePath(name);
+        QDir().mkpath(bundle);
+        for (const QString &file : {QStringLiteral("screen.mp4"), QStringLiteral("input.jsonl"),
+                                    QStringLiteral("capture.json")})
+            QFile::copy(QDir(m_bundle).filePath(file), QDir(bundle).filePath(file));
+        return bundle;
+    }
+
     QString cameraBundle(const QString &name)
     {
         const QString bundle = m_temporary.filePath(name);

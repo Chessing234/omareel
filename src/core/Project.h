@@ -61,14 +61,21 @@ struct Keystrokes {
     bool showOnlyShortcuts = true;
     int holdMs = 900;
 };
+// A piece of the recording, or of an inserted video when media is set.
 // layout: "default" shows the screen with the camera bubble, "camera" the webcam full frame,
-// "screen" the screen without the bubble.
+// "screen" the screen without the bubble. Inserted videos ignore it.
+// media: path of an inserted video, relative to the bundle and inside its media/ directory.
+// fit: how an inserted video meets the canvas: "fit" (whole, over a blurred copy), "fill"
+// (covering the canvas), "framed" (in the frame, over the background, like the screen).
 struct Clip {
     QString id;
     double in = 0.0;
     double out = 0.0;
     double speed = 1.0;
     QString layout = QStringLiteral("default");
+    QString media;
+    QString fit = QStringLiteral("fit");
+    bool isMedia() const { return !media.isEmpty(); }
 };
 struct ZoomSegment {
     QString id;
@@ -141,6 +148,9 @@ QJsonObject springToJson(const Spring &spring);
 Spring springFromJson(const QJsonObject &json, const Spring &defaults);
 QVector<double> allowedClipSpeeds();
 QStringList allowedClipLayouts();
+QStringList allowedClipFits();
+// The bundle-relative path of an inserted video, or empty unless path stays inside media/.
+QString sanitizedMediaPath(const QString &path);
 QStringList allowedAspects();
 
 } // namespace Omareel

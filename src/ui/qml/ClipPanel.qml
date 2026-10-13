@@ -11,6 +11,18 @@ ColumnLayout {
             if (editor.clips[i].id === editor.selectedClipId) return editor.clips[i]
         return null
     }
+    readonly property int selectedIndex: {
+        for (let i = 0; i < editor.clips.length; ++i)
+            if (editor.clips[i].id === editor.selectedClipId) return i
+        return -1
+    }
+    readonly property bool insert: root.selected !== null && root.selected.kind === "media"
+    readonly property int recordingClips: {
+        let count = 0
+        for (let i = 0; i < editor.clips.length; ++i)
+            if (editor.clips[i].kind !== "media") ++count
+        return count
+    }
     Label {
         visible: root.selected === null
         Layout.fillWidth: true
@@ -23,10 +35,10 @@ ColumnLayout {
         visible: root.selected !== null
         Layout.fillWidth: true
         spacing: 10
-        PanelLabel { visible: editor.hasCamera; text: "Layout" }
+        PanelLabel { visible: editor.hasCamera && !root.insert; text: "Layout" }
         OmButtonGroup {
             objectName: "clipLayoutGroup"
-            visible: editor.hasCamera
+            visible: editor.hasCamera && !root.insert
             Layout.fillWidth: true
             options: [{value:"default", label:"Screen & camera"}, {value:"camera", label:"Camera"},
                 {value:"screen", label:"Screen"}]
@@ -34,7 +46,7 @@ ColumnLayout {
             onChanged: value => editor.setClipLayout(editor.selectedClipId, value)
         }
         Label {
-            visible: editor.hasCamera && root.selected !== null
+            visible: editor.hasCamera && root.selected !== null && !root.insert
             Layout.fillWidth: true
             text: !root.selected ? ""
                 : root.selected.layout === "camera" ? "The webcam fills the frame. Choose Fill or Square in Camera."
@@ -45,6 +57,57 @@ ColumnLayout {
             font.pixelSize: theme.font.bodySmall
             wrapMode: Text.WordWrap
         }
+
+        PanelLabel { visible: root.insert; text: "Inserted video" }
+        Label {
+            visible: root.insert
+            Layout.fillWidth: true
+            text: !root.insert ? ""
+                : root.selected.missing ? root.selected.mediaName + " is missing from the recording."
+                : root.selected.mediaName
+            color: root.insert && root.selected.missing ? theme.record : theme.foreground
+            font.pixelSize: theme.font.body
+            elide: Text.ElideMiddle
+        }
+        PanelLabel { visible: root.insert; text: "Fit" }
+        OmButtonGroup {
+            objectName: "clipFitGroup"
+            visible: root.insert
+            Layout.fillWidth: true
+            options: [{value:"fit", label:"Fit"}, {value:"fill", label:"Fill"},
+                {value:"framed", label:"Framed"}]
+            value: root.insert ? root.selected.fit : "fit"
+            onChanged: value => editor.setClipFit(editor.selectedClipId, value)
+        }
+        Label {
+            visible: root.insert
+            Layout.fillWidth: true
+            text: !root.insert ? ""
+                : root.selected.fit === "fill" ? "Covers the whole frame, cropping what does not fit."
+                : root.selected.fit === "framed" ? "Sits in the frame over the background, like the screen."
+                : "Shows the whole video over a blurred copy of itself."
+            color: theme.textMuted
+            font.pixelSize: theme.font.bodySmall
+            wrapMode: Text.WordWrap
+        }
+        RowLayout {
+            visible: root.insert
+            Layout.fillWidth: true
+            spacing: theme.space.md
+            EditorButton {
+                Layout.fillWidth: true
+                text: "Move earlier"
+                enabled: root.selectedIndex > 0
+                onClicked: editor.reorderClip(editor.selectedClipId, -1)
+            }
+            EditorButton {
+                Layout.fillWidth: true
+                text: "Move later"
+                enabled: root.selectedIndex >= 0 && root.selectedIndex < editor.clips.length - 1
+                onClicked: editor.reorderClip(editor.selectedClipId, 1)
+            }
+        }
+
         PanelLabel { text: "Speed" }
         EditorComboBox {
             Layout.fillWidth: true
@@ -56,6 +119,29 @@ ColumnLayout {
             onActivated: editor.setClipSpeed(editor.selectedClipId, model[currentIndex])
         }
         EditorButton { Layout.fillWidth: true; text: "Remove trims"; onClicked: editor.resetClipTrims(editor.selectedClipId) }
-        EditorButton { Layout.fillWidth: true; text: "Delete clip"; destructive: true; enabled: editor.clips.length > 1; onClicked: editor.removeClip(editor.selectedClipId) }
+        EditorButton {
+            Layout.fillWidth: true
+            text: "Delete clip"
+            destructive: true
+            // The recording always keeps one clip.
+            enabled: editor.clips.length > 1 && (root.insert || root.recordingClips > 1)
+            onClicked: editor.removeClip(editor.selectedClipId)
+        }
     }
+    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.separator }
+    EditorButton {
+        objectName: "insertClipButton"
+        Layout.fillWidth: true
+        text: editor.importing ? "Adding clip…" : "Insert video at playhead…"
+        enabled: !editor.importing
+        onClicked: insertDialog.open()
+    }
+    Label {
+        Layout.fillWidth: true
+        text: "Add a demo or a retake between clips. It is copied into the recording, splitting the clip at the playhead."
+        color: theme.textMuted
+        font.pixelSize: theme.font.bodySmall
+        wrapMode: Text.WordWrap
+    }
+    InsertClipDialog { id: insertDialog }
 }
