@@ -7,6 +7,7 @@
 #include "core/CameraTimeline.h"
 #include "core/InputLog.h"
 #include "core/KeystrokeTrack.h"
+#include "core/LayoutTimeline.h"
 #include "core/MotionTrack.h"
 #include "core/OmarchyPaths.h"
 #include "core/Project.h"
@@ -38,6 +39,7 @@
 #include <QScopeGuard>
 #include <QTemporaryFile>
 #include <QTextStream>
+#include <algorithm>
 #include <cmath>
 #include <array>
 #include <cstring>
@@ -294,7 +296,11 @@ bool Exporter::run(const ExportOptions &options, QString *error)
     }
     QString cameraProbeError;
     const MediaInfo cameraMedia = QFileInfo(cameraPath).isFile() ? probe(cameraPath, &cameraProbeError) : MediaInfo{};
-    const bool cameraEnabled = project.camera.enabled && cameraMedia.width > 0;
+    const bool cameraFullFrame = std::any_of(project.clips.cbegin(), project.clips.cend(),
+        [](const Clip &clip) { return clip.layout == QLatin1String("camera"); });
+    // Camera clips show the webcam even when its bubble is switched off.
+    const bool cameraEnabled = cameraMedia.width > 0
+        && (project.camera.enabled || cameraFullFrame);
     const MotionTrack motion = MotionTrack::build(media.duration, media.width, media.height,
                                                    input.events(), project, captureFps);
     const KeystrokeTrack keystrokes = KeystrokeTrack::build(input.events(), project.keystrokes);
@@ -323,8 +329,16 @@ bool Exporter::run(const ExportOptions &options, QString *error)
                                                    neededHeight / media.height), 0.01, 1.0);
     const int decodeWidth = std::min(media.width, std::max(2, qRound(media.width * decodeScale / 2.0) * 2));
     const int decodeHeight = std::min(media.height, std::max(2, qRound(media.height * decodeScale / 2.0) * 2));
+    // A bubble needs a fraction of the output height; a full-frame camera has to cover the
+    // output once rotated.
+    const bool cameraQuarterTurn = project.camera.rotation == 90 || project.camera.rotation == 270;
+    const double cameraDisplayWidth = cameraQuarterTurn ? cameraMedia.height : cameraMedia.width;
+    const double cameraDisplayHeight = cameraQuarterTurn ? cameraMedia.width : cameraMedia.height;
     const double cameraDecodeScale = cameraEnabled
-        ? std::clamp(height * project.camera.size * 1.5 / cameraMedia.height, 0.01, 1.0) : 1.0;
+        ? std::clamp(std::max(height * project.camera.size * 1.5 / cameraDisplayHeight,
+                              cameraFullFrame ? std::max(width / cameraDisplayWidth,
+                                                         height / cameraDisplayHeight) : 0.0),
+                     0.01, 1.0) : 1.0;
     const int cameraDecodeWidth = cameraEnabled
         ? std::min(cameraMedia.width, std::max(2, qRound(cameraMedia.width * cameraDecodeScale / 2.0) * 2)) : 0;
     const int cameraDecodeHeight = cameraEnabled
@@ -381,6 +395,7 @@ bool Exporter::run(const ExportOptions &options, QString *error)
     state.project = projectMap(project);
     state.zoom = {{QStringLiteral("scale"), 1.0}, {QStringLiteral("cx"), 0.5},
         {QStringLiteral("cy"), 0.5}, {QStringLiteral("velocity"), 0.0}};
+    state.layout = {{QStringLiteral("cameraFull"), 0.0}, {QStringLiteral("bubble"), 1.0}};
     state.cursor = {{QStringLiteral("x"), 0.5}, {QStringLiteral("y"), 0.5},
         {QStringLiteral("visible"), project.cursor.visible}, {QStringLiteral("scale"), 1.0},
         {QStringLiteral("opacity"), project.cursor.visible ? 1.0 : 0.0}, {QStringLiteral("rotation"), 0.0}};
@@ -799,8 +814,12 @@ bool Exporter::run(const ExportOptions &options, QString *error)
         for (const KeystrokePill &pill : keystrokes.sample(sourceTime))
             state.keystrokePills << QVariantMap{{QStringLiteral("keys"), pill.keys},
                 {QStringLiteral("text"), pill.text}, {QStringLiteral("opacity"), pill.opacity}};
+        const LayoutSample layout = sampleLayout(project.clips, outputTime, cameraMedia.width > 0,
+                                                 project.camera.enabled);
+        state.layout = {{QStringLiteral("cameraFull"), layout.cameraFull},
+                        {QStringLiteral("bubble"), layout.bubble}};
         const CameraTime cameraTime = mapCameraTime(sourceTime, cameraOffset, cameraMedia.duration);
-        state.cameraVisible = !cameraTime.beforeStart;
+        state.cameraVisible = !cameraTime.beforeStart || layout.cameraFull > 0.0;
         state.notifyChanged();
         stageTimer.restart();
         frameSource->setImage(packet.image);

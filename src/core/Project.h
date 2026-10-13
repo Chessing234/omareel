@@ -61,7 +61,15 @@ struct Keystrokes {
     bool showOnlyShortcuts = true;
     int holdMs = 900;
 };
-struct Clip { QString id; double in = 0.0; double out = 0.0; double speed = 1.0; };
+// layout: "default" shows the screen with the camera bubble, "camera" the webcam full frame,
+// "screen" the screen without the bubble.
+struct Clip {
+    QString id;
+    double in = 0.0;
+    double out = 0.0;
+    double speed = 1.0;
+    QString layout = QStringLiteral("default");
+};
 struct ZoomSegment {
     QString id;
     double start = 0.0;
@@ -84,6 +92,9 @@ struct Camera {
     Border border{false, 2.0, QColor(Qt::white), 0.7};
     double scaleDuringZoom = 0.7;
     QPointF offset{0.02, 0.02};
+    // How a clip with the camera layout shows the webcam: "fill" covers the whole canvas,
+    // "square" keeps a centred square over a blurred copy of the camera.
+    QString fullFrame = QStringLiteral("fill");
 };
 struct GifExport { int fps = 15; int height = 480; QString quality = QStringLiteral("studio"); bool loop = true; };
 struct ExportSettings {
@@ -129,6 +140,7 @@ public:
 QJsonObject springToJson(const Spring &spring);
 Spring springFromJson(const QJsonObject &json, const Spring &defaults);
 QVector<double> allowedClipSpeeds();
+QStringList allowedClipLayouts();
 QStringList allowedAspects();
 
 } // namespace Omareel

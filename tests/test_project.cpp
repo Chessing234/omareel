@@ -1,6 +1,7 @@
 #include "core/Project.h"
 
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QTemporaryDir>
 #include <QtTest>
@@ -65,6 +66,40 @@ private slots:
         const QJsonObject writtenFrame = loaded.toJson().value(QStringLiteral("frame")).toObject();
         QVERIFY(writtenFrame.contains(QStringLiteral("border")));
         QVERIFY(!writtenFrame.contains(QStringLiteral("inset")));
+    }
+
+    void clipLayoutsAndFullFrameCamera()
+    {
+        Project project = Project::defaults(QStringLiteral("Layouts"), 6.0);
+        QCOMPARE(project.clips.first().layout, QStringLiteral("default"));
+        QCOMPARE(project.camera.fullFrame, QStringLiteral("fill"));
+        // A clip that keeps the default layout is written exactly as before layouts existed.
+        const QJsonObject plain = project.toJson().value("clips").toArray().first().toObject();
+        QVERIFY(!plain.contains(QStringLiteral("layout")));
+        QCOMPARE(plain.keys(), (QStringList{"id", "in", "out", "speed"}));
+
+        project.clips = {Clip{"intro", 0, 2, 1.0, "camera"}, Clip{"main", 2, 5, 1.0},
+                         Clip{"quiet", 5, 6, 1.0, "screen"}};
+        project.camera.fullFrame = QStringLiteral("square");
+        const Project loaded = Project::fromJson(project.toJson());
+        QCOMPARE(loaded.clips[0].layout, QStringLiteral("camera"));
+        QCOMPARE(loaded.clips[1].layout, QStringLiteral("default"));
+        QCOMPARE(loaded.clips[2].layout, QStringLiteral("screen"));
+        QCOMPARE(loaded.camera.fullFrame, QStringLiteral("square"));
+        QCOMPARE(loaded.toJson(), project.toJson());
+
+        QJsonObject json = project.toJson();
+        QJsonArray clips = json.value("clips").toArray();
+        QJsonObject odd = clips.first().toObject();
+        odd.insert(QStringLiteral("layout"), QStringLiteral("sideways"));
+        clips[0] = odd;
+        json.insert(QStringLiteral("clips"), clips);
+        QJsonObject camera = json.value("camera").toObject();
+        camera.insert(QStringLiteral("fullFrame"), QStringLiteral("stretch"));
+        json.insert(QStringLiteral("camera"), camera);
+        const Project fallback = Project::fromJson(json);
+        QCOMPARE(fallback.clips.first().layout, QStringLiteral("default"));
+        QCOMPARE(fallback.camera.fullFrame, QStringLiteral("fill"));
     }
 
     void migratesLegacyInsetToBorder()

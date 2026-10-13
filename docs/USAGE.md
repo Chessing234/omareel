@@ -145,6 +145,22 @@ adjust it and preview that endpoint. Seeking and Space playback stay inside the 
 stops at its end and restarts at its start. Press Delete or Backspace to cut the range and join
 the remaining footage, or Escape to clear it.
 
+## Clip layouts
+
+Each clip has a layout, chosen in the Clip panel or from the menu on the clip's label:
+
+- **Screen & camera** shows the screen with the camera bubble set up in the Camera panel.
+- **Camera** shows the webcam full screen, for a talking-head intro, outro, or aside.
+- **Screen** shows the screen without the bubble.
+
+To open on a talking head, move the playhead to where the screen part starts, press `S`, select
+the first clip, and choose Camera. Camera clips show webcam frames on the timeline. Moving between
+layouts animates over half a second at the start of the next clip: the bubble grows into the full
+frame, or shrinks back into its corner. The Camera panel's Full screen setting picks how camera
+clips look: **Fill frame** covers the whole canvas with the uncropped webcam, and **Square + blur**
+keeps a centred square over a blurred copy of the camera. Camera clips show the webcam even with
+the bubble switched off.
+
 ## Project bundle
 
 The bundle directory contains `screen.mp4`, its `screen.mp4.ts` first-frame timestamp,

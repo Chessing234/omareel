@@ -79,6 +79,54 @@ ColumnLayout {
             onChanged: value => editor.setProjectValue("camera.crop", value)
         }
 
+        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.separator }
+        PanelHeading { text: "Camera shadow" }
+        EditorSwitch { Layout.preferredHeight: 32; text: "Shadow"; checked: root.camera.shadow.enabled; onToggled: editor.setProjectValue("camera.shadow.enabled", checked) }
+        PanelSlider { Layout.fillWidth: true; label: "Intensity"; path: "camera.shadow.intensity"; from: 0; to: 1; value: root.camera.shadow.intensity; stepSize: .01; decimals: 2 }
+        PanelSlider { Layout.fillWidth: true; label: "Blur"; path: "camera.shadow.blur"; from: 0; to: 64; value: root.camera.shadow.blur; stepSize: 1 }
+        PanelSlider { Layout.fillWidth: true; label: "Distance"; path: "camera.shadow.distance"; from: 0; to: 80; value: root.camera.shadow.distance; stepSize: 1 }
+
+        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.separator }
+        PanelHeading { text: "Border" }
+        EditorSwitch { Layout.preferredHeight: 32; text: "Border"; checked: root.camera.border.enabled; onToggled: editor.setProjectValue("camera.border.enabled", checked) }
+        PanelSlider { Layout.fillWidth: true; label: "Width"; path: "camera.border.width"; from: 0; to: 16; value: root.camera.border.width; stepSize: 1 }
+        PanelSlider { Layout.fillWidth: true; label: "Opacity"; path: "camera.border.alpha"; from: 0; to: 1; value: root.camera.border.alpha; stepSize: .01; decimals: 2 }
+        RowLayout {
+            Layout.fillWidth: true
+            PanelLabel { text: "Colour"; Layout.fillWidth: true }
+            Rectangle {
+                width: 44; height: 28; radius: theme.radius; color: root.camera.border.color
+                border.width: 1; border.color: root.camera.border.enabled ? theme.selectedBorder : theme.normalBorder
+                MouseArea { anchors.fill: parent; onClicked: borderColourDialog.open() }
+            }
+        }
+        PanelSlider { Layout.fillWidth: true; label: "Shrink while zoomed"; path: "camera.scaleDuringZoom"; from: .4; to: 1; value: root.camera.scaleDuringZoom; stepSize: .01; decimals: 2 }
+    }
+    // Orientation and the full-screen look apply to camera clips too, so they stay available
+    // with the bubble switched off.
+    ColumnLayout {
+        visible: editor.hasCamera
+        Layout.fillWidth: true
+        spacing: theme.space.panelGap
+
+        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.separator }
+        PanelHeading { text: "Full screen" }
+        OmButtonGroup {
+            objectName: "cameraFullFrameGroup"
+            Layout.fillWidth: true
+            options: [{value:"fill", label:"Fill frame"}, {value:"square", label:"Square + blur"}]
+            value: root.camera.fullFrame
+            onChanged: value => editor.setProjectValue("camera.fullFrame", value)
+        }
+        Label {
+            Layout.fillWidth: true
+            text: "Clips with the Camera layout show the webcam full screen. Set a clip's layout in Clip."
+            color: theme.textMuted
+            font.pixelSize: theme.font.bodySmall
+            wrapMode: Text.WordWrap
+        }
+
+        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.separator }
         RowLayout {
             Layout.fillWidth: true
             PanelLabel { text: "Rotation"; Layout.fillWidth: true }
@@ -102,29 +150,6 @@ ColumnLayout {
             checked: root.camera.flipHorizontal
             onToggled: editor.setProjectValue("camera.flipHorizontal", checked)
         }
-
-        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.separator }
-        PanelHeading { text: "Camera shadow" }
-        EditorSwitch { Layout.preferredHeight: 32; text: "Shadow"; checked: root.camera.shadow.enabled; onToggled: editor.setProjectValue("camera.shadow.enabled", checked) }
-        PanelSlider { Layout.fillWidth: true; label: "Intensity"; path: "camera.shadow.intensity"; from: 0; to: 1; value: root.camera.shadow.intensity; stepSize: .01; decimals: 2 }
-        PanelSlider { Layout.fillWidth: true; label: "Blur"; path: "camera.shadow.blur"; from: 0; to: 64; value: root.camera.shadow.blur; stepSize: 1 }
-        PanelSlider { Layout.fillWidth: true; label: "Distance"; path: "camera.shadow.distance"; from: 0; to: 80; value: root.camera.shadow.distance; stepSize: 1 }
-
-        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.separator }
-        PanelHeading { text: "Border" }
-        EditorSwitch { Layout.preferredHeight: 32; text: "Border"; checked: root.camera.border.enabled; onToggled: editor.setProjectValue("camera.border.enabled", checked) }
-        PanelSlider { Layout.fillWidth: true; label: "Width"; path: "camera.border.width"; from: 0; to: 16; value: root.camera.border.width; stepSize: 1 }
-        PanelSlider { Layout.fillWidth: true; label: "Opacity"; path: "camera.border.alpha"; from: 0; to: 1; value: root.camera.border.alpha; stepSize: .01; decimals: 2 }
-        RowLayout {
-            Layout.fillWidth: true
-            PanelLabel { text: "Colour"; Layout.fillWidth: true }
-            Rectangle {
-                width: 44; height: 28; radius: theme.radius; color: root.camera.border.color
-                border.width: 1; border.color: root.camera.border.enabled ? theme.selectedBorder : theme.normalBorder
-                MouseArea { anchors.fill: parent; onClicked: borderColourDialog.open() }
-            }
-        }
-        PanelSlider { Layout.fillWidth: true; label: "Shrink while zoomed"; path: "camera.scaleDuringZoom"; from: .4; to: 1; value: root.camera.scaleDuringZoom; stepSize: .01; decimals: 2 }
     }
     ColorDialog {
         id: borderColourDialog

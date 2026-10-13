@@ -14,6 +14,61 @@
 
 using namespace Omareel;
 
+static bool makeColourVideo(const QString &colour, const QString &path, double seconds = 2.0,
+                            const QString &size = QStringLiteral("640x360"))
+{
+    QProcess process;
+    process.start(QStringLiteral("ffmpeg"), {QStringLiteral("-y"), QStringLiteral("-v"), QStringLiteral("error"),
+        QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+        QStringLiteral("color=c=%1:size=%2:rate=30").arg(colour, size),
+        QStringLiteral("-t"), QString::number(seconds), QStringLiteral("-c:v"), QStringLiteral("libx264"),
+        QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"), path});
+    return process.waitForFinished(30000) && process.exitCode() == 0;
+}
+
+static bool exportBundle(const QString &bundle, const QString &output, QString *error)
+{
+    Exporter exporter;
+    QString failure;
+    QObject::connect(&exporter, &Exporter::failed, [&](const QString &message) { failure = message; });
+    bool done = false;
+    QObject::connect(&exporter, &Exporter::finished, [&] { done = true; });
+    ExportOptions options;
+    options.bundlePath = bundle;
+    options.outputPath = output;
+    options.fps = 30;
+    options.width = 640;
+    exporter.exportBundle(options);
+    if (error) *error = failure;
+    return done && failure.isEmpty();
+}
+
+static double probeDuration(const QString &path)
+{
+    QProcess probe;
+    probe.start(QStringLiteral("ffprobe"), {QStringLiteral("-v"), QStringLiteral("error"),
+        QStringLiteral("-show_entries"), QStringLiteral("format=duration"),
+        QStringLiteral("-of"), QStringLiteral("csv=p=0"), path});
+    if (!probe.waitForFinished(15000)) return -1.0;
+    return probe.readAllStandardOutput().trimmed().toDouble();
+}
+
+static QColor pixelAt(const QString &video, double seconds, int x, int y)
+{
+    QProcess process;
+    process.start(QStringLiteral("ffmpeg"), {QStringLiteral("-v"), QStringLiteral("error"),
+        QStringLiteral("-ss"), QString::number(seconds, 'f', 3), QStringLiteral("-i"), video,
+        QStringLiteral("-frames:v"), QStringLiteral("1"), QStringLiteral("-f"), QStringLiteral("image2pipe"),
+        QStringLiteral("-c:v"), QStringLiteral("png"), QStringLiteral("-")});
+    if (!process.waitForFinished(15000)) return {};
+    const QImage frame = QImage::fromData(process.readAllStandardOutput(), "PNG");
+    return frame.valid(x, y) ? frame.pixelColor(x, y) : QColor();
+}
+
+static bool isRed(const QColor &c) { return c.isValid() && c.red() > 150 && c.green() < 90 && c.blue() < 90; }
+static bool isGreen(const QColor &c) { return c.isValid() && c.green() > 130 && c.red() < 90 && c.blue() < 90; }
+static bool isBlue(const QColor &c) { return c.isValid() && c.blue() > 150 && c.red() < 90 && c.green() < 90; }
+
 class ExporterSmokeTest : public QObject
 {
     Q_OBJECT
@@ -137,6 +192,72 @@ private slots:
         }
         QCOMPARE(QDir(temporary.path()).entryList({QStringLiteral(".omareel-export-*.mp4")},
                                                   QDir::Files | QDir::Hidden), QStringList());
+    }
+
+    void cameraLayoutsRenderFullFrame()
+    {
+        if (QStandardPaths::findExecutable(QStringLiteral("ffmpeg")).isEmpty()
+            || QStandardPaths::findExecutable(QStringLiteral("ffprobe")).isEmpty())
+            QSKIP("ffmpeg/ffprobe unavailable");
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        // Blue screen, red camera, green background: every pixel says which layer it shows.
+        const QString bundle = temporary.filePath(QStringLiteral("layouts.omareel"));
+        QVERIFY(QDir().mkpath(bundle));
+        QVERIFY(makeColourVideo(QStringLiteral("blue"), QDir(bundle).filePath(QStringLiteral("screen.mp4"))));
+        QVERIFY(makeColourVideo(QStringLiteral("red"), QDir(bundle).filePath(QStringLiteral("camera.mp4"))));
+        QFile capture(QDir(bundle).filePath(QStringLiteral("capture.json")));
+        QVERIFY(capture.open(QIODevice::WriteOnly));
+        capture.write(R"({"fps":30,"first_frame_us":1000,"camera":{"first_frame_us":1000}})");
+        capture.close();
+        QFile input(QDir(bundle).filePath(QStringLiteral("input.jsonl")));
+        QVERIFY(input.open(QIODevice::WriteOnly));
+        input.close();
+
+        Project project = Project::defaults(QStringLiteral("Layouts"), 2.0);
+        project.clips = {Clip{QStringLiteral("intro"), 0.0, 1.0, 1.0, QStringLiteral("camera")},
+                         Clip{QStringLiteral("main"), 1.0, 2.0, 1.0}};
+        project.background.type = QStringLiteral("color");
+        project.background.color = QColor(QStringLiteral("#00c000"));
+        project.cursor.visible = false;
+        project.camera.enabled = true;
+        project.camera.shadow.enabled = false;
+        const QString projectPath = QDir(bundle).filePath(QStringLiteral("project.json"));
+        QString error;
+        QVERIFY2(project.save(projectPath, &error), qPrintable(error));
+
+        const QString output = temporary.filePath(QStringLiteral("fill.mp4"));
+        QVERIFY2(exportBundle(bundle, output, &error), qPrintable(error));
+        QVERIFY(qAbs(probeDuration(output) - 2.0) < 0.05);
+        // The camera clip fills the canvas edge to edge.
+        QVERIFY(isRed(pixelAt(output, 0.5, 4, 4)));
+        QVERIFY(isRed(pixelAt(output, 0.5, 320, 180)));
+        // A quarter second into the next clip the camera is halfway back to its bubble, and the
+        // screen shows around it.
+        QVERIFY(isRed(pixelAt(output, 1.25, 500, 300)));
+        QVERIFY(isBlue(pixelAt(output, 1.25, 100, 100)));
+        // Then the screen with the round bubble at the bottom right.
+        QVERIFY(isBlue(pixelAt(output, 1.9, 320, 180)));
+        QVERIFY(isRed(pixelAt(output, 1.9, 582, 308)));
+
+        project.camera.fullFrame = QStringLiteral("square");
+        QVERIFY2(project.save(projectPath, &error), qPrintable(error));
+        const QString square = temporary.filePath(QStringLiteral("square.mp4"));
+        QVERIFY2(exportBundle(bundle, square, &error), qPrintable(error));
+        QVERIFY(isRed(pixelAt(square, 0.5, 320, 180)));
+        // Beside the square: a blurred copy of the camera, or a dark fill in software rendering,
+        // never the screen or the background.
+        const QColor side = pixelAt(square, 0.5, 20, 180);
+        QVERIFY2(!isBlue(side) && !isGreen(side), qPrintable(side.name()));
+
+        // Switching the bubble off leaves camera clips full frame.
+        project.camera.fullFrame = QStringLiteral("fill");
+        project.camera.enabled = false;
+        QVERIFY2(project.save(projectPath, &error), qPrintable(error));
+        const QString noBubble = temporary.filePath(QStringLiteral("no-bubble.mp4"));
+        QVERIFY2(exportBundle(bundle, noBubble, &error), qPrintable(error));
+        QVERIFY(isRed(pixelAt(noBubble, 0.5, 320, 180)));
+        QVERIFY(isGreen(pixelAt(noBubble, 1.9, 582, 308)));
     }
 
     void exportsTwoSecondH264()

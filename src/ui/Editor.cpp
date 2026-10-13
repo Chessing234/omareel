@@ -139,7 +139,33 @@ QVariantList buildCameraThumbnails(const QString &videoPath, double duration,
     return result;
 }
 
-bool buildVideoThumbnail(const QString &videoPath, const QString &path, int milliseconds)
+// The 16-character fingerprint keys the cache to this exact file, so a re-recorded bundle never
+// shows stale frames; suffix separates differently filtered frames of the same file.
+QString thumbnailCacheDirectory(const QString &videoPath, const QString &suffix)
+{
+    const QFileInfo videoSource(videoPath);
+    const QByteArray fingerprint = QCryptographicHash::hash(
+        (videoSource.canonicalFilePath() + QLatin1Char('|') + QString::number(videoSource.size())
+         + QLatin1Char('|') + QString::number(videoSource.lastModified().toMSecsSinceEpoch())).toUtf8(),
+        QCryptographicHash::Sha256).toHex().left(16);
+    return QDir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation))
+        .filePath(QStringLiteral("clip-filmstrips-v2/") + QString::fromLatin1(fingerprint) + suffix);
+}
+
+QSet<int> cachedThumbnails(const QString &cacheDirectory)
+{
+    QSet<int> ready;
+    for (const QFileInfo &file : QDir(cacheDirectory).entryInfoList(
+             {QStringLiteral("??????????.jpg")}, QDir::Files)) {
+        bool valid = false;
+        const int sample = file.completeBaseName().toInt(&valid);
+        if (valid && file.size() > 0) ready.insert(sample);
+    }
+    return ready;
+}
+
+bool buildVideoThumbnail(const QString &videoPath, const QString &filter, const QString &path,
+                         int milliseconds)
 {
     const QFileInfo target(path);
     if (!QDir().mkpath(target.absolutePath())) return false;
@@ -150,7 +176,8 @@ bool buildVideoThumbnail(const QString &videoPath, const QString &path, int mill
         QStringLiteral("-v"), QStringLiteral("error"), QStringLiteral("-ss"),
         QString::number(milliseconds / 1000.0, 'f', 3), QStringLiteral("-i"), videoPath,
         QStringLiteral("-frames:v"), QStringLiteral("1"), QStringLiteral("-an"),
-        QStringLiteral("-vf"), QStringLiteral("scale=160:90:force_original_aspect_ratio=increase,crop=160:90"),
+        QStringLiteral("-vf"), (filter.isEmpty() ? QString() : filter + QLatin1Char(','))
+            + QStringLiteral("scale=160:90:force_original_aspect_ratio=increase,crop=160:90"),
         QStringLiteral("-q:v"), QStringLiteral("4"), QStringLiteral("-y"), temporary});
     if (!process.waitForFinished(20000)) {
         process.kill();
@@ -194,20 +221,15 @@ Editor::Editor(const QString &bundlePath, QObject *parent)
         emit cameraThumbnailsChanged();
     });
     connect(&m_videoThumbnailWatcher, &QFutureWatcher<bool>::finished, this, [this] {
-        const int finished = m_videoThumbnailQueue.takeFirst();
-        m_videoThumbnailPending.remove(finished);
-        if (!m_videoThumbnailWatcher.result()) m_videoThumbnailFailed.insert(finished);
-        else {
-            m_videoThumbnailReady.insert(finished);
-            if (m_videoThumbnailReady.size() > 512) {
-                m_videoThumbnailReady.clear();
-                const QDir cache(m_videoThumbnailCacheDirectory);
-                for (const QFileInfo &file : cache.entryInfoList(
-                         {QStringLiteral("??????????.jpg")}, QDir::Files)) {
-                    bool valid = false;
-                    const int sample = file.completeBaseName().toInt(&valid);
-                    if (valid && file.size() > 0) m_videoThumbnailReady.insert(sample);
-                }
+        const auto [key, finished] = m_videoThumbnailQueue.takeFirst();
+        if (ThumbnailSource *source = thumbnailSource(key)) {
+            source->pending.remove(finished);
+            if (!m_videoThumbnailWatcher.result()) source->failed.insert(finished);
+            else {
+                source->ready.insert(finished);
+                // buildVideoThumbnail keeps the newest 512 files; resync once more are known.
+                if (source->ready.size() > 512)
+                    source->ready = cachedThumbnails(source->cacheDirectory);
             }
         }
         ++m_videoThumbnailRevision;
@@ -220,21 +242,7 @@ Editor::Editor(const QString &bundlePath, QObject *parent)
         m_gradients = QJsonDocument::fromJson(gradientsFile.readAll()).array().toVariantList();
 
     if (!loadBundle()) return;
-    const QFileInfo videoSource(m_videoPath);
-    const QByteArray videoFingerprint = QCryptographicHash::hash(
-        (videoSource.canonicalFilePath() + QLatin1Char('|') + QString::number(videoSource.size())
-         + QLatin1Char('|') + QString::number(videoSource.lastModified().toMSecsSinceEpoch())).toUtf8(),
-        QCryptographicHash::Sha256).toHex().left(16);
-    m_videoThumbnailCacheDirectory = QDir(
-        QStandardPaths::writableLocation(QStandardPaths::CacheLocation))
-        .filePath(QStringLiteral("clip-filmstrips-v2/") + QString::fromLatin1(videoFingerprint));
-    const QDir videoCache(m_videoThumbnailCacheDirectory);
-    for (const QFileInfo &file : videoCache.entryInfoList(
-             {QStringLiteral("??????????.jpg")}, QDir::Files)) {
-        bool valid = false;
-        const int sample = file.completeBaseName().toInt(&valid);
-        if (valid && file.size() > 0) m_videoThumbnailReady.insert(sample);
-    }
+    thumbnailSource(QStringLiteral("screen"));
     m_audioOutput = std::make_unique<QAudioOutput>();
     m_player.setAudioOutput(m_audioOutput.get());
     connect(&m_player, &QMediaPlayer::mediaStatusChanged, this,
@@ -380,6 +388,15 @@ QVariantMap Editor::projectMap() const
     }
     background[QStringLiteral("resolvedImage")] = image.isEmpty() ? QString() : QUrl::fromLocalFile(image).toString();
     result[QStringLiteral("background")] = background;
+    // project.json leaves default layouts out; QML reads every clip's layout.
+    QVariantList clips = result.value(QStringLiteral("clips")).toList();
+    for (QVariant &value : clips) {
+        QVariantMap clip = value.toMap();
+        if (!clip.contains(QStringLiteral("layout")))
+            clip.insert(QStringLiteral("layout"), QStringLiteral("default"));
+        value = clip;
+    }
+    result[QStringLiteral("clips")] = clips;
     m_projectMapCache = result;
     m_projectMapCacheValid = true;
     return m_projectMapCache;
@@ -419,6 +436,18 @@ QVariantMap Editor::previewZoom() const
         {QStringLiteral("cy"), s.zoomCy}, {QStringLiteral("velocity"), s.zoomCenterVelocity}};
 }
 
+LayoutSample Editor::layoutAt(double outputTime) const
+{
+    return sampleLayout(m_project.clips, outputTime, m_hasCamera, m_project.camera.enabled);
+}
+
+QVariantMap Editor::previewLayout() const
+{
+    const LayoutSample layout = layoutAt(m_outputPosition);
+    return {{QStringLiteral("cameraFull"), layout.cameraFull},
+            {QStringLiteral("bubble"), layout.bubble}};
+}
+
 QVariantMap Editor::previewCursor() const
 {
     const MotionSample s = m_motion ? m_motion->sample(sourcePosition()) : MotionSample{};
@@ -450,7 +479,9 @@ bool Editor::cameraVisible() const
 {
     if (!m_hasCamera) return false;
     const CameraTime mapped = mapCameraTime(sourcePosition(), m_cameraOffset, m_cameraDuration);
-    return !mapped.beforeStart;
+    // A full-frame camera holds its first frame until the camera started instead of leaving
+    // the frame empty.
+    return !mapped.beforeStart || layoutAt(m_outputPosition).cameraFull > 0.0;
 }
 
 void Editor::attachVideoOutput(QObject *output)
@@ -739,49 +770,116 @@ QString Editor::videoThumbnailUrl(double sourceTime)
 QString Editor::videoThumbnailUrlForClip(double sourceTime, double sourceStart,
                                          double sourceEnd)
 {
-    if (!m_valid || !std::isfinite(sourceTime) || !std::isfinite(sourceStart)
-        || !std::isfinite(sourceEnd) || m_videoThumbnailCacheDirectory.isEmpty()) return {};
-    sourceStart = std::clamp(sourceStart, 0.0, m_sourceDuration);
-    sourceEnd = std::clamp(sourceEnd, sourceStart, m_sourceDuration);
-    if (sourceEnd - sourceStart <= 0.001) return {};
-    const int firstSample = qCeil(sourceStart * 1000.0);
-    const double tailMargin = std::min((sourceEnd - sourceStart) / 2.0,
-                                       1.5 / std::max(1.0, m_fps));
-    const int lastSample = std::max(firstSample, qFloor((sourceEnd - tailMargin) * 1000.0));
-    const int milliseconds = std::clamp(qRound(sourceTime * 10.0) * 100,
-                                        firstSample, lastSample);
-    const QString path = QDir(m_videoThumbnailCacheDirectory)
-        .filePath(QStringLiteral("%1.jpg").arg(milliseconds, 10, 10, QLatin1Char('0')));
+    return thumbnailUrl(QStringLiteral("screen"), sourceTime, sourceStart, sourceEnd);
+}
+
+QString Editor::clipThumbnailUrl(const QString &clipId, double sourceTime, double sourceStart,
+                                 double sourceEnd)
+{
+    const int index = clipIndex(clipId);
+    if (index < 0 || !m_hasCamera || m_project.clips[index].layout != QLatin1String("camera"))
+        return videoThumbnailUrlForClip(sourceTime, sourceStart, sourceEnd);
+    // The camera runs m_cameraOffset behind the screen. Before it started, the preview holds its
+    // first frame, and so does the filmstrip.
+    const auto cameraTime = [this](double screenTime) {
+        return std::clamp(screenTime - m_cameraOffset, 0.0, m_cameraDuration);
+    };
+    double from = cameraTime(sourceStart);
+    const double to = std::max(cameraTime(sourceEnd), std::min(m_cameraDuration, from + 0.1));
+    from = std::min(from, std::max(0.0, to - 0.1));
+    return thumbnailUrl(cameraThumbnailKey(), cameraTime(sourceTime), from, to);
+}
+
+QString Editor::cameraThumbnailKey() const
+{
+    return QStringLiteral("camera-r%1%2").arg(m_project.camera.rotation)
+        .arg(m_project.camera.flipHorizontal ? QStringLiteral("f") : QString());
+}
+
+Editor::ThumbnailSource *Editor::thumbnailSource(const QString &key)
+{
+    const auto found = m_thumbnailSources.find(key);
+    if (found != m_thumbnailSources.end()) return &found->second;
+    ThumbnailSource source;
+    if (key == QLatin1String("screen")) {
+        source.videoPath = m_videoPath;
+        source.duration = m_sourceDuration;
+        source.fps = m_fps;
+        source.cacheDirectory = thumbnailCacheDirectory(m_videoPath, {});
+    } else if (m_hasCamera && key.startsWith(QLatin1String("camera-r"))) {
+        // Thumbnails show the camera the way the composition turns it: flipped first, then
+        // rotated clockwise, matching CameraOverlay's transform order.
+        const bool flipped = key.endsWith(QLatin1Char('f'));
+        const int rotation = key.mid(8, key.size() - 8 - (flipped ? 1 : 0)).toInt();
+        QStringList filters;
+        if (flipped) filters << QStringLiteral("hflip");
+        if (rotation == 90) filters << QStringLiteral("transpose=clock");
+        else if (rotation == 180) filters << QStringLiteral("hflip,vflip");
+        else if (rotation == 270) filters << QStringLiteral("transpose=cclock");
+        source.videoPath = m_cameraVideoPath;
+        source.filter = filters.join(QLatin1Char(','));
+        source.duration = m_cameraDuration;
+        source.fps = m_cameraFps > 0.0 ? m_cameraFps : 30.0;
+        source.cacheDirectory = thumbnailCacheDirectory(m_cameraVideoPath,
+                                                        QLatin1Char('-') + key);
+    } else {
+        return nullptr;
+    }
+    source.ready = cachedThumbnails(source.cacheDirectory);
+    return &m_thumbnailSources.emplace(key, std::move(source)).first->second;
+}
+
+QString Editor::thumbnailUrl(const QString &key, double time, double start, double end)
+{
+    if (!m_valid || !std::isfinite(time) || !std::isfinite(start) || !std::isfinite(end))
+        return {};
+    ThumbnailSource *source = thumbnailSource(key);
+    if (!source) return {};
+    start = std::clamp(start, 0.0, source->duration);
+    end = std::clamp(end, start, source->duration);
+    if (end - start <= 0.001) return {};
+    const int firstSample = qCeil(start * 1000.0);
+    const double tailMargin = std::min((end - start) / 2.0, 1.5 / std::max(1.0, source->fps));
+    const int lastSample = std::max(firstSample, qFloor((end - tailMargin) * 1000.0));
+    const int milliseconds = std::clamp(qRound(time * 10.0) * 100, firstSample, lastSample);
+    const QDir cache(source->cacheDirectory);
+    const QString path = cache.filePath(
+        QStringLiteral("%1.jpg").arg(milliseconds, 10, 10, QLatin1Char('0')));
     if (QFileInfo(path).size() > 0) {
-        m_videoThumbnailReady.insert(milliseconds);
+        source->ready.insert(milliseconds);
         return QUrl::fromLocalFile(path).toString();
     }
-    if (!m_videoThumbnailPending.contains(milliseconds)
-        && !m_videoThumbnailFailed.contains(milliseconds)
+    if (!source->pending.contains(milliseconds) && !source->failed.contains(milliseconds)
         && m_videoThumbnailQueue.size() < 96) {
-        m_videoThumbnailPending.insert(milliseconds);
-        m_videoThumbnailQueue << milliseconds;
+        source->pending.insert(milliseconds);
+        m_videoThumbnailQueue << qMakePair(key, milliseconds);
         startNextVideoThumbnail();
     }
     int nearest = -1;
-    for (const int ready : std::as_const(m_videoThumbnailReady))
+    for (const int ready : std::as_const(source->ready))
         if (ready >= firstSample && ready <= lastSample
             && (nearest < 0 || std::abs(ready - milliseconds) < std::abs(nearest - milliseconds)))
             nearest = ready;
     if (nearest < 0) return {};
-    return QUrl::fromLocalFile(QDir(m_videoThumbnailCacheDirectory)
-        .filePath(QStringLiteral("%1.jpg").arg(nearest, 10, 10, QLatin1Char('0')))).toString();
+    return QUrl::fromLocalFile(cache.filePath(
+        QStringLiteral("%1.jpg").arg(nearest, 10, 10, QLatin1Char('0')))).toString();
 }
 
 void Editor::startNextVideoThumbnail()
 {
     if (playing() || m_scrubbing || m_videoThumbnailWatcher.isRunning()
         || m_videoThumbnailQueue.isEmpty()) return;
-    const int milliseconds = m_videoThumbnailQueue.first();
-    const QString path = QDir(m_videoThumbnailCacheDirectory)
+    const auto [key, milliseconds] = m_videoThumbnailQueue.first();
+    const ThumbnailSource *source = thumbnailSource(key);
+    if (!source) {
+        m_videoThumbnailQueue.removeFirst();
+        startNextVideoThumbnail();
+        return;
+    }
+    const QString path = QDir(source->cacheDirectory)
         .filePath(QStringLiteral("%1.jpg").arg(milliseconds, 10, 10, QLatin1Char('0')));
     m_videoThumbnailWatcher.setFuture(QtConcurrent::run(
-        buildVideoThumbnail, m_videoPath, path, milliseconds));
+        buildVideoThumbnail, source->videoPath, source->filter, path, milliseconds));
 }
 
 double Editor::clampPlaybackPosition(double outputTime) const
@@ -970,7 +1068,9 @@ void Editor::syncCamera(double screenSourceTime, bool force)
     const CameraTime mapped = mapCameraTime(screenSourceTime, m_cameraOffset, m_cameraDuration);
     const qint64 target = qRound64(mapped.seconds * 1000.0);
     m_cameraPlayer.setPlaybackRate(m_player.playbackRate());
-    if (force || std::abs(m_cameraPlayer.position() - target) > 250) {
+    // A bubble tolerates some drift; a full-frame talking head needs its lips on the audio.
+    const qint64 tolerance = layoutAt(m_outputPosition).cameraFull > 0.0 ? 80 : 250;
+    if (force || std::abs(m_cameraPlayer.position() - target) > tolerance) {
         const bool cameraStalled = m_cameraPlayer.mediaStatus() == QMediaPlayer::EndOfMedia
             || m_cameraPlayer.playbackState() == QMediaPlayer::StoppedState;
         m_cameraPlayer.setPosition(target);
@@ -982,10 +1082,11 @@ void Editor::syncCamera(double screenSourceTime, bool force)
         }
     }
     if (m_player.playbackState() == QMediaPlayer::PlayingState
-        && !mapped.beforeStart && !mapped.beyondEnd)
+        && !mapped.beforeStart && !mapped.beyondEnd) {
         if (m_cameraPlayer.playbackState() != QMediaPlayer::PlayingState) m_cameraPlayer.play();
-    else
-        if (m_cameraPlayer.playbackState() != QMediaPlayer::PausedState) m_cameraPlayer.pause();
+    } else if (m_cameraPlayer.playbackState() != QMediaPlayer::PausedState) {
+        m_cameraPlayer.pause();
+    }
 }
 
 void Editor::updatePreview() { emit compositionChanged(); }
@@ -1156,6 +1257,19 @@ bool Editor::setClipSpeed(const QString &id, double speed)
     m_project.clips[index].speed = speed;
     changed(false);
     seek(std::min(m_outputPosition, duration()));
+    return true;
+}
+
+bool Editor::setClipLayout(const QString &id, const QString &layout)
+{
+    const int index = clipIndex(id);
+    if (index < 0 || !allowedClipLayouts().contains(layout)) return false;
+    if (m_project.clips[index].layout == layout) return true;
+    snapshot();
+    m_project.clips[index].layout = layout;
+    changed(false);
+    // The camera now has to keep up with a full-frame layout, or may fall back to a bubble.
+    syncCamera(sourcePosition(), true);
     return true;
 }
 

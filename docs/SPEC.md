@@ -424,3 +424,46 @@ Defaults: MP4 { fps 60, quality social, height 1080 }  GIF { fps 15, quality stu
 ```
 
 Clip speed choices: 0.5 0.75 1 1.2 1.4 1.6 1.8 2 3 4 8 16 24 (stored as `speed`).
+
+## 9. Clip layouts
+
+These extend §3 and §4.
+
+### 9.1 Model
+
+```jsonc
+"clips": [
+  {"id":"intro","in":0.0,"out":8.2,"speed":1.0,"layout":"camera"},   // webcam full frame
+  {"id":"c1","in":8.2,"out":95.0,"speed":1.0},                        // "default": screen + bubble
+  {"id":"c2","in":95.0,"out":110.0,"speed":1.0,"layout":"screen"}     // screen, no bubble
+],
+"camera": { ..., "fullFrame": "fill" }   // fill | square
+```
+
+`layout` is written only when it is not `default`, so projects without layouts are unchanged.
+Splitting a clip copies its layout to both halves.
+
+### 9.2 Evaluation (`core/LayoutTimeline`, pure, unit-tested)
+
+`sampleLayout(clips, outputTime, cameraAvailable, bubbleEnabled)` returns `cameraFull` (0 bubble,
+1 full frame) and `bubble` (bubble visibility). Targets: `camera` → {1, 0}; `screen` → {0, 0};
+`default` → {0, camera.enabled}; without a camera every layout is {0, 0}. Clip `k` eases from
+clip `k - 1`'s target to its own over its first `min(0.5 s, clip output length)` with
+easeInOutCubic, so every clip ends on its target. Layouts use output time, so transitions are
+the same across cuts and speed changes.
+
+### 9.3 Rendering
+
+`CameraOverlay` interpolates position, size and corner radius from the bubble rect to the full
+rect by `cameraFull`; border and shadow fade with it. The full rect is the canvas (`fill`) or the
+largest centred square (`square`); `square` adds a blurred copy of the camera behind it
+(`BlurredBackdrop`, a 24 px capture blurred and scaled to cover; a dark fill under software
+rendering). The camera is cover-cropped to its current rect. Opacity is `min(1, cameraFull +
+bubble)`, so no layout change dips the camera. Once `cameraFull` reaches 1 the background, stage
+and keystrokes are not drawn. A camera layout shows the camera's first frame before the camera
+started. Export decodes the camera whenever a clip uses the camera layout, at a size that covers
+the output.
+
+Preview: the camera player is re-seeked when it drifts more than 250 ms from the screen, or more
+than 80 ms while a camera layout is on screen.
+

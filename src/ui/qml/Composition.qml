@@ -29,13 +29,24 @@ Item {
         : Math.max(1, Math.min(availableWidth - 2 * borderWidth,
                               (availableHeight - 2 * borderWidth) * sourceAspect))
     property real videoHeight: noBackground ? height : videoWidth / sourceAspect
+    readonly property bool cameraShown: comp.cameraAvailable && comp.cameraVisible
+    // How far the current clip's layout has grown the camera to full frame.
+    readonly property real cameraFull: cameraShown ? comp.layout.cameraFull : 0
+    // Once the camera covers the canvas, nothing beneath it needs drawing.
+    readonly property bool screenCovered: cameraFull >= 1
     clip: true
 
-    Background { anchors.fill: parent; settings: comp.project.background; softwareRendering: comp.softwareRendering }
+    Background {
+        anchors.fill: parent
+        visible: !composition.screenCovered
+        settings: comp.project.background
+        softwareRendering: comp.softwareRendering
+    }
 
     Item {
         id: stage
         anchors.fill: parent
+        visible: !composition.screenCovered
         layer.enabled: !comp.softwareRendering && comp.project.zoomStyle.motionBlur > 0
             && comp.zoom.velocity > 0.01
         layer.effect: MultiEffect {
@@ -75,8 +86,10 @@ Item {
     }
     CameraOverlay {
         id: cameraOverlay
-        visible: comp.cameraAvailable && comp.cameraVisible && comp.project.camera.enabled
+        visible: composition.cameraShown && (composition.cameraFull > 0 || comp.layout.bubble > 0)
         settings: comp.project.camera
+        fullProgress: composition.cameraFull
+        bubbleOpacity: comp.layout.bubble
         zoomScale: comp.zoom.scale
         outputWidth: composition.width
         outputHeight: composition.height
@@ -87,6 +100,8 @@ Item {
     }
     KeystrokeOverlay {
         visible: comp.project.keystrokes.enabled && comp.keystrokePills.length > 0
+            && !composition.screenCovered
+        opacity: 1 - composition.cameraFull
         pills: comp.keystrokePills
         settings: comp.project.keystrokes
         colors: comp.project.renderTheme

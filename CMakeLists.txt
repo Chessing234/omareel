@@ -52,6 +52,7 @@ add_library(omareel_core STATIC
     src/core/ZoomTimeline.cpp
     src/core/ClipTimeline.cpp
     src/core/CameraTimeline.cpp
+    src/core/LayoutTimeline.cpp
     src/core/Theme.cpp
     src/core/OmarchyPaths.cpp
     src/core/RecordingMetadata.cpp
@@ -100,6 +101,7 @@ set_source_files_properties(
     src/ui/qml/RoundedFrame.qml
     src/ui/qml/CursorOverlay.qml
     src/ui/qml/CameraOverlay.qml
+    src/ui/qml/BlurredBackdrop.qml
     src/ui/qml/KeystrokeOverlay.qml
     src/ui/qml/Main.qml
     src/ui/qml/TopBar.qml
@@ -136,6 +138,7 @@ set_source_files_properties(src/ui/qml/Background.qml PROPERTIES QT_RESOURCE_ALI
 set_source_files_properties(src/ui/qml/RoundedFrame.qml PROPERTIES QT_RESOURCE_ALIAS "RoundedFrame.qml")
 set_source_files_properties(src/ui/qml/CursorOverlay.qml PROPERTIES QT_RESOURCE_ALIAS "CursorOverlay.qml")
 set_source_files_properties(src/ui/qml/CameraOverlay.qml PROPERTIES QT_RESOURCE_ALIAS "CameraOverlay.qml")
+set_source_files_properties(src/ui/qml/BlurredBackdrop.qml PROPERTIES QT_RESOURCE_ALIAS "BlurredBackdrop.qml")
 foreach(qml_name IN ITEMS Main TopBar PreviewPane BottomBar SidePanel PanelSlider PanelLabel PanelHeading PanelValue IconToolButton EditorButton EditorSlider EditorSwitch EditorComboBox BackgroundPanel ShapePanel CursorPanel ZoomPanel AudioPanel ClipPanel CameraPanel KeystrokesPanel ExportDialog Timeline ClipTrack ZoomTrack Launcher RecordingBar)
     set_source_files_properties(src/ui/qml/${qml_name}.qml PROPERTIES QT_RESOURCE_ALIAS "${qml_name}.qml")
 endforeach()
@@ -160,6 +163,7 @@ qt_add_qml_module(omareel_render
         src/ui/qml/RoundedFrame.qml
         src/ui/qml/CursorOverlay.qml
         src/ui/qml/CameraOverlay.qml
+        src/ui/qml/BlurredBackdrop.qml
         src/ui/qml/KeystrokeOverlay.qml
         src/ui/qml/Main.qml
         src/ui/qml/TopBar.qml
@@ -227,7 +231,7 @@ add_custom_command(TARGET omareel POST_BUILD
 
 include(CTest)
 if(BUILD_TESTING)
-    foreach(test_name IN ITEMS zoomtimeline cursorpath cliptimeline cameratimeline keystroketrack project inputlog regionpicker omarchypaths recorder)
+    foreach(test_name IN ITEMS zoomtimeline cursorpath cliptimeline cameratimeline layouttimeline keystroketrack project inputlog regionpicker omarchypaths recorder)
         qt_add_executable(test_${test_name} tests/test_${test_name}.cpp)
         target_link_libraries(test_${test_name} PRIVATE omareel_core Qt6::Test)
         add_test(NAME ${test_name} COMMAND test_${test_name})

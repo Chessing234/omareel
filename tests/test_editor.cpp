@@ -3,6 +3,7 @@
 #include "render/VideoDecoding.h"
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QProcess>
 #include <QSignalSpy>
@@ -1238,7 +1239,163 @@ private slots:
         Q_UNUSED(errors);
     }
 
+    void clipLayoutsAreUndoableAndSurviveSplits()
+    {
+        Editor editor(cameraBundle(QStringLiteral("layouts.omareel")));
+        QVERIFY2(editor.isValid(), qPrintable(editor.errorString()));
+        QVERIFY(editor.hasCamera());
+        const auto layoutOf = [&](int index) {
+            return editor.clips().at(index).toMap().value(QStringLiteral("layout")).toString();
+        };
+        const auto cameraFull = [&] {
+            return editor.previewLayout().value(QStringLiteral("cameraFull")).toDouble();
+        };
+        const QString first = editor.clips().first().toMap().value(QStringLiteral("id")).toString();
+        QCOMPARE(layoutOf(0), QStringLiteral("default"));
+        QCOMPARE(cameraFull(), 0.0);
+        QCOMPARE(editor.previewLayout().value(QStringLiteral("bubble")).toDouble(), 1.0);
+        QVERIFY(!editor.setClipLayout(first, QStringLiteral("sideways")));
+        QVERIFY(!editor.canUndo());
+
+        QVERIFY(editor.setClipLayout(first, QStringLiteral("camera")));
+        QCOMPARE(layoutOf(0), QStringLiteral("camera"));
+        QCOMPARE(cameraFull(), 1.0);
+        QVERIFY(editor.cameraVisible());
+        editor.undo();
+        QCOMPARE(layoutOf(0), QStringLiteral("default"));
+        QCOMPARE(cameraFull(), 0.0);
+        editor.redo();
+        QCOMPARE(layoutOf(0), QStringLiteral("camera"));
+
+        editor.seek(1.0);
+        QVERIFY(editor.splitAtPlayhead());
+        QCOMPARE(editor.clips().size(), 2);
+        QCOMPARE(layoutOf(1), QStringLiteral("camera"));
+        const QString second = editor.clips().at(1).toMap().value(QStringLiteral("id")).toString();
+        QVERIFY(editor.setClipLayout(second, QStringLiteral("default")));
+        // A quarter second into the second clip, the camera is halfway back to its bubble.
+        editor.seek(1.25);
+        QVERIFY(qAbs(cameraFull() - 0.5) < 1e-6);
+        QVERIFY(editor.setClipLayout(second, QStringLiteral("screen")));
+        editor.seek(1.9);
+        QCOMPARE(cameraFull(), 0.0);
+        QCOMPARE(editor.previewLayout().value(QStringLiteral("bubble")).toDouble(), 0.0);
+
+        // The camera clip's filmstrip shows the webcam, the others the screen.
+        QString cameraThumbnail;
+        QTRY_VERIFY_WITH_TIMEOUT(!(cameraThumbnail = editor.clipThumbnailUrl(first, .5, 0, 1)).isEmpty(), 30000);
+        QVERIFY2(cameraThumbnail.contains(QStringLiteral("-camera-r0/")), qPrintable(cameraThumbnail));
+        QCOMPARE(QImage(QUrl(cameraThumbnail).toLocalFile()).size(), QSize(160, 90));
+        QString screenThumbnail;
+        QTRY_VERIFY_WITH_TIMEOUT(!(screenThumbnail = editor.clipThumbnailUrl(second, 1.5, 1, 2)).isEmpty(), 30000);
+        QVERIFY(!screenThumbnail.contains(QStringLiteral("-camera-")));
+    }
+
+    void cameraKeepsPlayingAlongsideTheScreen()
+    {
+        Editor editor(cameraBundle(QStringLiteral("camera-sync.omareel")));
+        QVERIFY2(editor.isValid(), qPrintable(editor.errorString()));
+        QVideoSink sink;
+        QVideoSink cameraSink;
+        QObject holder;
+        QObject cameraHolder;
+        holder.setProperty("videoSink", QVariant::fromValue(&sink));
+        cameraHolder.setProperty("videoSink", QVariant::fromValue(&cameraSink));
+        editor.attachVideoOutput(&holder);
+        editor.attachCameraVideoOutput(&cameraHolder);
+        QTRY_VERIFY_WITH_TIMEOUT(editor.playerMediaStatusForTests() >= QMediaPlayer::LoadedMedia, 15000);
+        QTRY_VERIFY_WITH_TIMEOUT(!editor.playing(), 5000);
+        editor.seek(0.1);
+        editor.play();
+        QTRY_VERIFY_WITH_TIMEOUT(editor.cameraPlaybackStateForTests() == QMediaPlayer::PlayingState, 5000);
+        // syncCamera once paused the camera on every other preview tick while the screen played.
+        int paused = 0;
+        int samples = 0;
+        QElapsedTimer elapsed;
+        elapsed.start();
+        while (elapsed.elapsed() < 800 && editor.playing() && editor.position() < 1.6) {
+            QTest::qWait(5);
+            ++samples;
+            if (editor.cameraPlaybackStateForTests() != QMediaPlayer::PlayingState) ++paused;
+        }
+        QVERIFY(samples > 20);
+        QCOMPARE(paused, 0);
+        editor.pause();
+        QTRY_COMPARE_WITH_TIMEOUT(editor.cameraPlaybackStateForTests(), QMediaPlayer::PausedState, 2000);
+    }
+
+    void cameraOverlayGrowsToFullFrame()
+    {
+        const auto overlayAt = [](QQmlEngine &engine, const QString &fullFrame, double progress) {
+            QQmlComponent component(&engine);
+            component.setData(QStringLiteral(R"(
+                import QtQuick
+                import Omareel
+                CameraOverlay {
+                    settings: ({
+                        enabled: true, position: "bottom-right", size: .25,
+                        shape: "round", radius: 16, crop: "original",
+                        rotation: 0, flipHorizontal: false, scaleDuringZoom: .7,
+                        offset: {x: .02, y: .02}, fullFrame: "%1",
+                        shadow: {enabled: false, intensity: .55, blur: 18, distance: 18},
+                        border: {enabled: true, width: 2, color: "white", alpha: .7}
+                    })
+                    zoomScale: 1
+                    fullProgress: %2
+                    bubbleOpacity: 0
+                    outputWidth: 1280; outputHeight: 720
+                    sourceWidth: 1920; sourceHeight: 1080
+                })").arg(fullFrame).arg(progress).toUtf8(), QUrl());
+            return std::unique_ptr<QObject>(component.create());
+        };
+        const auto rect = [](QObject *item) {
+            return QRectF(item->property("x").toDouble(), item->property("y").toDouble(),
+                          item->property("width").toDouble(), item->property("height").toDouble());
+        };
+        QQmlEngine engine;
+        auto fill = overlayAt(engine, QStringLiteral("fill"), 1);
+        QVERIFY(fill);
+        QCOMPARE(rect(fill.get()), QRectF(0, 0, 1280, 720));
+        QCOMPARE(fill->property("opacity").toDouble(), 1.0);
+        QCOMPARE(fill->property("borderWidth").toDouble(), 0.0);
+        QCOMPARE(fill->property("cornerRadius").toDouble(), 0.0);
+        auto *fillSource = fill->findChild<QQuickItem *>(QStringLiteral("cameraFrameSource"));
+        QVERIFY(fillSource);
+        QCOMPARE(fillSource->property("cropRect").toRectF(), QRectF(0, 0, 1, 1));
+
+        auto square = overlayAt(engine, QStringLiteral("square"), 1);
+        QVERIFY(square);
+        QCOMPARE(rect(square.get()), QRectF(280, 0, 720, 720));
+        auto *squareSource = square->findChild<QQuickItem *>(QStringLiteral("cameraFrameSource"));
+        QCOMPARE(squareSource->property("cropRect").toRectF(), QRectF(0.21875, 0, 0.5625, 1));
+
+        // Halfway, the round bubble (180 px, 25.6 px from the corner) is halfway to the canvas,
+        // with half its corner radius, and fully opaque even though the bubble itself is hidden.
+        auto half = overlayAt(engine, QStringLiteral("fill"), .5);
+        const QRectF bubble(1280 * .98 - 180, 720 * .98 - 180, 180, 180);
+        const QRectF middle = rect(half.get());
+        QVERIFY(qAbs(middle.x() - bubble.x() / 2) < 1e-6);
+        QVERIFY(qAbs(middle.width() - (180 + 1280) / 2.0) < 1e-6);
+        QVERIFY(qAbs(half->property("cornerRadius").toDouble() - 45) < 1e-6);
+        QCOMPARE(half->property("opacity").toDouble(), .5);
+    }
+
 private:
+    QString cameraBundle(const QString &name)
+    {
+        const QString bundle = m_temporary.filePath(name);
+        if (QDir(bundle).exists()) return bundle;
+        QDir().mkpath(bundle);
+        for (const QString &file : {QStringLiteral("screen.mp4"), QStringLiteral("input.jsonl")})
+            QFile::copy(QDir(m_bundle).filePath(file), QDir(bundle).filePath(file));
+        QFile::copy(QDir(m_bundle).filePath(QStringLiteral("screen.mp4")),
+                    QDir(bundle).filePath(QStringLiteral("camera.mp4")));
+        QFile capture(QDir(bundle).filePath(QStringLiteral("capture.json")));
+        if (capture.open(QIODevice::WriteOnly))
+            capture.write(R"({"fps":30,"first_frame_us":1000000,"camera":{"first_frame_us":1000000}})");
+        return bundle;
+    }
+
     QTemporaryDir m_temporary;
     QString m_bundle;
 };

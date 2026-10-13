@@ -154,7 +154,7 @@ Item {
                             const revision = editor.videoThumbnailRevision
                             const sourceTime = clipBlock.displayedIn
                                 + (x + width / 2) / root.pixelsPerSecond * clipBlock.modelData.speed
-                            return editor.videoThumbnailUrlForClip(sourceTime,
+                            return editor.clipThumbnailUrl(clipBlock.modelData.id, sourceTime,
                                 clipBlock.displayedIn, clipBlock.displayedOut)
                         }
                     }
@@ -244,7 +244,9 @@ Item {
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                     elide: Text.ElideRight
-                    text: "Clip · " + Number(modelData.speed).toFixed(modelData.speed % 1 ? 2 : 0) + "×"
+                    text: (modelData.layout === "camera" ? "Camera"
+                           : modelData.layout === "screen" ? "Screen" : "Clip")
+                        + " · " + Number(modelData.speed).toFixed(modelData.speed % 1 ? 2 : 0) + "×"
                     font.weight: Font.Medium
                     font.pixelSize: theme.font.body
                     color: theme.foreground
@@ -308,9 +310,29 @@ Item {
             }
             Menu {
                 id: speedMenu
-                width: 120
+                width: editor.hasCamera ? 168 : 120
                 padding: 4
                 background: OmPopupCard { padding: 0 }
+                Repeater {
+                    model: editor.hasCamera ? [{value:"default", label:"Screen & camera"},
+                        {value:"camera", label:"Camera"}, {value:"screen", label:"Screen"}] : []
+                    delegate: MenuItem {
+                        required property var modelData
+                        height: theme.space.popupRowHeight
+                        text: modelData.label
+                        checkable: true
+                        checked: clipBlock.modelData.layout === modelData.value
+                        indicator: null
+                        contentItem: Text { text: (parent.checked ? "✓  " : "    ") + parent.text; color: parent.highlighted ? theme.menuSelectedText : theme.menuText; font.family: theme.fontFamily; font.pixelSize: theme.font.body; verticalAlignment: Text.AlignVCenter }
+                        onTriggered: editor.setClipLayout(clipBlock.modelData.id, modelData.value)
+                        background: Rectangle { radius: theme.radius; color: parent.highlighted ? theme.menuSelectedBackground : "transparent" }
+                    }
+                }
+                MenuSeparator {
+                    visible: editor.hasCamera
+                    height: visible ? implicitHeight : 0
+                    contentItem: Rectangle { implicitHeight: 1; color: theme.hairline }
+                }
                 Repeater {
                     model: [0.5,0.75,1,1.2,1.4,1.6,1.8,2,3,4,8,16,24]
                     delegate: MenuItem {

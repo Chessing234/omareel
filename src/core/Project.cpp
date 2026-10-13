@@ -31,6 +31,11 @@ QVector<double> Omareel::allowedClipSpeeds()
     return {0.5, 0.75, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 3.0, 4.0, 8.0, 16.0, 24.0};
 }
 
+QStringList Omareel::allowedClipLayouts()
+{
+    return {QStringLiteral("default"), QStringLiteral("camera"), QStringLiteral("screen")};
+}
+
 QStringList Omareel::allowedAspects()
 {
     return {QStringLiteral("auto"), QStringLiteral("16:9"), QStringLiteral("1:1"),
@@ -118,8 +123,11 @@ Project Project::fromJson(const QJsonObject &root)
     p.clips.clear();
     for (const auto &value : source.value("clips").toArray()) {
         const auto o = value.toObject();
-        p.clips << Clip{o.value("id").toString(), o.value("in").toDouble(),
-                       o.value("out").toDouble(), o.value("speed").toDouble(1.0)};
+        Clip clip{o.value("id").toString(), o.value("in").toDouble(),
+                  o.value("out").toDouble(), o.value("speed").toDouble(1.0)};
+        const QString layout = o.value("layout").toString();
+        if (allowedClipLayouts().contains(layout)) clip.layout = layout;
+        p.clips << clip;
     }
     p.zooms.clear();
     for (const auto &value : source.value("zooms").toArray()) {
@@ -249,6 +257,8 @@ Project Project::fromJson(const QJsonObject &root)
     const auto cameraOffset = camera.value("offset").toObject();
     p.camera.offset = QPointF(cameraOffset.value("x").toDouble(0.02),
                               cameraOffset.value("y").toDouble(0.02));
+    if (camera.value("fullFrame").toString() == QLatin1String("square"))
+        p.camera.fullFrame = QStringLiteral("square");
     const auto e = source.value("export").toObject();
     p.exportSettings.format = e.value("format").toString("mp4");
     p.exportSettings.fps = e.value("fps").toInt(60);
@@ -265,7 +275,12 @@ Project Project::fromJson(const QJsonObject &root)
 QJsonObject Project::toJson() const
 {
     QJsonArray clipArray;
-    for (const auto &c : clips) clipArray << QJsonObject{{"id", c.id}, {"in", c.in}, {"out", c.out}, {"speed", c.speed}};
+    for (const auto &c : clips) {
+        QJsonObject clip{{"id", c.id}, {"in", c.in}, {"out", c.out}, {"speed", c.speed}};
+        // Clips that keep the default layout stay as they were written before layouts existed.
+        if (c.layout != QLatin1String("default")) clip.insert("layout", c.layout);
+        clipArray << clip;
+    }
     QJsonArray zoomArray;
     for (const auto &z : zooms) {
         QJsonValue target = z.automaticTarget ? QJsonValue(QStringLiteral("auto"))
@@ -312,7 +327,7 @@ QJsonObject Project::toJson() const
                 {"width", camera.border.width}, {"color", camera.border.color.name(QColor::HexRgb)},
                 {"alpha", camera.border.alpha}}},
             {"scaleDuringZoom", camera.scaleDuringZoom}, {"offset", QJsonObject{{"x", camera.offset.x()},
-                {"y", camera.offset.y()}}}}},
+                {"y", camera.offset.y()}}}, {"fullFrame", camera.fullFrame}}},
         {"export", QJsonObject{{"format", exportSettings.format}, {"fps", exportSettings.fps}, {"height", exportSettings.height},
             {"quality", exportSettings.quality}, {"gif", QJsonObject{{"fps", exportSettings.gif.fps}, {"height", exportSettings.gif.height},
                 {"quality", exportSettings.gif.quality}, {"loop", exportSettings.gif.loop}}}}}};
