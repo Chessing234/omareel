@@ -479,6 +479,100 @@ private slots:
         QVERIFY(CaptureExclusion::ensureLoaded().reason.contains("does not exist"));
     }
 
+    void stuckAudioCaptureStopsQuicklyAndKeepsItsAudio()
+    {
+        if (QStandardPaths::findExecutable("ffmpeg").isEmpty()
+            || QStandardPaths::findExecutable("ffprobe").isEmpty())
+            QSKIP("ffmpeg/ffprobe unavailable");
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString screen = temporary.filePath("screen-video.mp4");
+        const QString audio = temporary.filePath("audio.mka");
+        QProcess make;
+        make.start("ffmpeg", {"-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30",
+                              "-t", "2", "-c:v", "libx264", screen});
+        QVERIFY(make.waitForFinished(30000) && make.exitCode() == 0);
+        make.start("ffmpeg", {"-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+                              "-t", "2", "-c:a", "aac", audio});
+        QVERIFY(make.waitForFinished(30000) && make.exitCode() == 0);
+        // ffmpeg blocked on a PipeWire source that sends nothing never acts on SIGINT.
+        const auto deafRecorder = [](QProcess &process) {
+            process.start("sh", {"-c", "trap '' INT; echo ready; exec sleep 30"});
+            return process.waitForReadyRead(5000);
+        };
+
+        QProcess stuck;
+        QVERIFY(deafRecorder(stuck));
+        const QString output = temporary.filePath("screen.mp4");
+        QElapsedTimer elapsed;
+        elapsed.start();
+        QVERIFY(Recorder::finishAudioCapture(&stuck, screen, audio, output, 0, 0, 2000000));
+        QVERIFY2(elapsed.elapsed() < 5000, qPrintable(QString::number(elapsed.elapsed())));
+        QProcess probe;
+        probe.start("ffprobe", {"-v", "error", "-select_streams", "a", "-show_entries",
+                                "stream=codec_type", "-of", "csv=p=0", output});
+        QVERIFY(probe.waitForFinished(15000));
+        QCOMPARE(probe.readAllStandardOutput().trimmed(), QByteArray("audio"));
+
+        // Nothing ever reached the file: no audio, and still no long wait.
+        QProcess silent;
+        QVERIFY(deafRecorder(silent));
+        elapsed.restart();
+        QVERIFY(!Recorder::finishAudioCapture(&silent, screen, temporary.filePath("none.mka"),
+                                              temporary.filePath("silent.mp4"), 0, 0, 2000000));
+        QVERIFY2(elapsed.elapsed() < 5000, qPrintable(QString::number(elapsed.elapsed())));
+    }
+
+    void recordingHoldsHardwareCursors()
+    {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QByteArray oldPath = qgetenv("PATH");
+        const auto restore = qScopeGuard([&] {
+            qputenv("PATH", oldPath);
+            qunsetenv("OMAREEL_TEST_CURSOR");
+            qunsetenv("OMAREEL_TEST_EVAL_EXIT");
+        });
+        const QString logPath = temporary.filePath("calls");
+        QFile mock(temporary.filePath("hyprctl"));
+        QVERIFY(mock.open(QIODevice::WriteOnly));
+        mock.write(("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + logPath + "'\n"
+                    "case \"$*\" in\n"
+                    " '-j getoption cursor:no_hardware_cursors') printf '{\"option\": \"cursor:no_hardware_cursors\", "
+                    "\"int\": %s, \"set\": false }' \"$OMAREEL_TEST_CURSOR\";;\n"
+                    " eval*) exit \"${OMAREEL_TEST_EVAL_EXIT:-0}\";;\nesac\n").toUtf8());
+        mock.close();
+        QVERIFY(mock.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+        qputenv("PATH", temporary.path().toUtf8());
+        const auto calls = [&] {
+            QFile log(logPath);
+            const QStringList lines = log.open(QIODevice::ReadOnly)
+                ? QString::fromUtf8(log.readAll()).split('\n', Qt::SkipEmptyParts) : QStringList();
+            log.remove();
+            return lines;
+        };
+
+        // Hyprland's automatic choice is held at hardware and put back afterwards.
+        qputenv("OMAREEL_TEST_CURSOR", "2");
+        { const HardwareCursorHold hold; }
+        QCOMPARE(calls(), QStringList({"-j getoption cursor:no_hardware_cursors",
+            "eval hl.config({ cursor = { no_hardware_cursors = 0 } })",
+            "eval hl.config({ cursor = { no_hardware_cursors = 2 } })"}));
+        // Hardware cursors already: nothing to change.
+        qputenv("OMAREEL_TEST_CURSOR", "0");
+        { const HardwareCursorHold hold; }
+        QCOMPARE(calls(), QStringList({"-j getoption cursor:no_hardware_cursors"}));
+        // A hyprlang config takes keyword instead of eval.
+        qputenv("OMAREEL_TEST_CURSOR", "1");
+        qputenv("OMAREEL_TEST_EVAL_EXIT", "1");
+        { const HardwareCursorHold hold; }
+        QCOMPARE(calls(), QStringList({"-j getoption cursor:no_hardware_cursors",
+            "eval hl.config({ cursor = { no_hardware_cursors = 0 } })",
+            "keyword cursor:no_hardware_cursors 0",
+            "eval hl.config({ cursor = { no_hardware_cursors = 1 } })",
+            "keyword cursor:no_hardware_cursors 1"}));
+    }
+
     void selfViewDragUsesStableGlobalCoordinates()
     {
         const QSize screenSize(2400, 1350);

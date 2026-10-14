@@ -505,30 +505,33 @@ static bool startAudioCapture(QProcess *process, const RecordOptions &options,
                   << QStringLiteral("-map") << QStringLiteral("[a]");
     else
         arguments << QStringLiteral("-map") << QStringLiteral("0:a");
+    // Matroska flushed half a second at a time stays readable if ffmpeg has to be killed.
     arguments << QStringLiteral("-c:a") << QStringLiteral("aac")
-              << QStringLiteral("-b:a") << QStringLiteral("192k") << path;
+              << QStringLiteral("-b:a") << QStringLiteral("192k")
+              << QStringLiteral("-flush_packets") << QStringLiteral("1")
+              << QStringLiteral("-cluster_time_limit") << QStringLiteral("500") << path;
     process->setProcessChannelMode(QProcess::MergedChannels);
     *startedUs = CursorSampler::monotonicUs();
     process->start(QStringLiteral("ffmpeg"), arguments);
     return process->waitForStarted(5000) && writeStartTimestamp(path + QStringLiteral(".ts"), *startedUs);
 }
 
-static bool finishAudioCapture(QProcess *process, const QString &screenPath,
-                               const QString &audioPath, const QString &outputPath,
-                               qint64 screenStartedUs, qint64 audioStartedUs,
-                               qint64 screenDurationUs)
+bool Recorder::finishAudioCapture(QProcess *process, const QString &screenPath,
+                                  const QString &audioPath, const QString &outputPath,
+                                  qint64 screenStartedUs, qint64 audioStartedUs,
+                                  qint64 screenDurationUs)
 {
+    // ffmpeg stops within a fraction of a second of SIGINT while audio arrives. A source that
+    // sends nothing, such as a wedged PipeWire graph, leaves it blocked reading and deaf to the
+    // signal, so after two seconds it is killed and whatever audio reached the file is kept.
     if (process->state() != QProcess::NotRunning) {
         ::kill(pid_t(process->processId()), SIGINT);
-        if (!process->waitForFinished(10000)) {
+        if (!process->waitForFinished(2000)) {
             process->kill();
             process->waitForFinished(1000);
         }
     }
-    const bool cleanAudioStop = process->exitStatus() == QProcess::NormalExit
-        && (process->exitCode() == 0 || process->exitCode() == 255);
-    if (!cleanAudioStop
-        || QFileInfo(audioPath).size() <= 0) return false;
+    if (QFileInfo(audioPath).size() <= 0) return false;
     const double offset = (audioStartedUs - screenStartedUs) / 1000000.0;
     // The screen video sets the length: audio past its end is cut, and audio that ends early
     // leaves the video whole. -shortest would instead drop every video frame shown past the end
@@ -859,7 +862,7 @@ int Recorder::daemonMain(const QStringList &arguments)
     const bool audioRequested = options.desktopAudio || options.microphoneAudio;
     const QString nativeVideo = audioRequested
         ? bundle + QStringLiteral("/screen-video.mp4") : video;
-    const QString audioVideo = bundle + QStringLiteral("/audio.m4a");
+    const QString audioVideo = bundle + QStringLiteral("/audio.mka");
     QProcess audioRecorder;
     qint64 audioStartedUs = 0;
     bool audioActive = false;
@@ -936,6 +939,8 @@ int Recorder::daemonMain(const QStringList &arguments)
     };
     if (!waitForFallbackPlacement())
         return failRecorderStartup(QStringLiteral("Overlays could not leave the recorded output"), bundle, video, &cursorSampler, &evdevListener);
+    // Declared before the capture so the pointer stays off the frames until it has stopped.
+    const HardwareCursorHold hardwareCursor;
     ScreenCapture screenCapture;
     if (nativeCapture) {
         QRect crop;
@@ -1283,8 +1288,12 @@ int Recorder::daemonMain(const QStringList &arguments)
             debugLog.write(QStringLiteral("omareel: Recording saved: %1\n").arg(bundle).toUtf8());
             debugLog.flush();
         }
+        const bool audioLost = nativeCapture && audioRequested && !audioMuxed;
         runOptionalDetached(QStringLiteral("omarchy-notification-send"),
-                            {QStringLiteral("Recording saved"), QFileInfo(bundle).completeBaseName(),
+                            {audioLost ? QStringLiteral("Recording saved without audio")
+                                       : QStringLiteral("Recording saved"),
+                             audioLost ? QStringLiteral("No sound arrived from the desktop or microphone")
+                                       : QFileInfo(bundle).completeBaseName(),
                              QStringLiteral("--exec"), QCoreApplication::applicationFilePath(),
                              QStringLiteral("edit"), bundle});
         if (!options.noOpen)

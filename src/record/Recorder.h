@@ -6,6 +6,8 @@
 #include <QString>
 #include <functional>
 
+class QProcess;
+
 namespace Omareel {
 
 struct RecordOptions {
@@ -61,6 +63,10 @@ public:
                                           qint64 firstFrameUs, const QString &backend,
                                           int rotation, bool flipHorizontal);
     static bool discardTimeline(const DiscardActions &actions);
+    static bool finishAudioCapture(QProcess *process, const QString &screenPath,
+                                   const QString &audioPath, const QString &outputPath,
+                                   qint64 screenStartedUs, qint64 audioStartedUs,
+                                   qint64 screenDurationUs);
     static int startDetached(const RecordOptions &options, QString *message);
     static int stopExisting(bool cancel, QString *bundlePath, QString *error);
     static int daemonMain(const QStringList &arguments);

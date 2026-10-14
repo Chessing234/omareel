@@ -77,6 +77,11 @@ QCameraFormat selectedFormat(const QCameraDevice &device, int requestedHeight)
 
 } // namespace
 
+bool Omareel::cameraCanRecord(const QCameraDevice &device)
+{
+    return !selectedFormat(device, 1080).isNull();
+}
+
 FirstFrameTimestamp::FirstFrameTimestamp(QString path): m_path(std::move(path))
 {
 }
@@ -335,9 +340,11 @@ CameraCapture::CameraCapture(const QString &devicePath, int requestedHeight,
     m_session->setVideoSink(m_sink.get());
     connect(m_sink.get(), &QVideoSink::videoFrameChanged, this, &CameraCapture::handleFrame);
     m_startTimer->setSingleShot(true);
-    m_startTimer->setInterval(2000);
+    // Some webcams take seconds to stream after they open; the Insta360 Link 2 calibrates first.
+    // Only a camera that stays dark well past that is treated as broken.
+    m_startTimer->setInterval(10000);
     connect(m_startTimer.get(), &QTimer::timeout, this, [this] {
-        if (!m_ready) fail(QStringLiteral("Camera did not produce a frame within two seconds"));
+        if (!m_ready) fail(QStringLiteral("Camera did not produce a frame within ten seconds"));
     });
 }
 
@@ -360,6 +367,9 @@ void CameraCapture::attachVideoOutput(QObject *output)
 void CameraCapture::start()
 {
     if (m_running || m_stopping) return;
+    // The preview keeps the previous camera's final frame otherwise, which looks like a frozen
+    // feed while this one starts or after it fails.
+    if (m_previewSink) m_previewSink->setVideoFrame({});
     const QCameraDevice device = selectedDevice(m_devicePath);
     if (device.isNull()) { fail(QStringLiteral("Selected camera is unavailable")); return; }
     m_camera = std::make_unique<QCamera>(device);

@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QProcess>
 #include <QRegularExpression>
+#include <algorithm>
 #include <cmath>
 
 using namespace Omareel;
@@ -75,4 +76,25 @@ VideoInfo Omareel::probeVideo(const QString &path, QString *error)
     }
     if (error) error->clear();
     return info;
+}
+
+QList<double> Omareel::probeFrameTimes(const QString &path)
+{
+    if (!QFileInfo(path).isFile()) return {};
+    QProcess process;
+    process.start(QStringLiteral("ffprobe"), {QStringLiteral("-v"), QStringLiteral("error"),
+        QStringLiteral("-select_streams"), QStringLiteral("v:0"), QStringLiteral("-show_entries"),
+        QStringLiteral("packet=pts_time"), QStringLiteral("-of"), QStringLiteral("csv=p=0"), path});
+    if (!process.waitForFinished(60000) || process.exitCode() != 0) {
+        if (process.state() != QProcess::NotRunning) process.kill();
+        return {};
+    }
+    QList<double> times;
+    for (const QByteArray &line : process.readAllStandardOutput().split('\n')) {
+        bool valid = false;
+        const double time = line.trimmed().toDouble(&valid);
+        if (valid) times << time;
+    }
+    std::sort(times.begin(), times.end());
+    return times;
 }

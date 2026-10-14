@@ -352,6 +352,9 @@ Editor::Editor(const QString &bundlePath, QObject *parent)
         m_cameraPlayer.setSource(QUrl::fromLocalFile(m_cameraVideoPath));
     }
     m_valid = true;
+    connect(&m_screenFrameTimesWatcher, &QFutureWatcher<QList<double>>::finished, this,
+            [this] { m_screenFrameTimes = m_screenFrameTimesWatcher.result(); });
+    m_screenFrameTimesWatcher.setFuture(QtConcurrent::run(probeFrameTimes, m_videoPath));
     ++m_motionGeneration;
     rebuildMotion();
     startCameraThumbnailBuild();
@@ -366,6 +369,7 @@ Editor::~Editor()
     m_cameraThumbnailWatcher.waitForFinished();
     m_videoThumbnailWatcher.waitForFinished();
     m_importWatcher.waitForFinished();
+    m_screenFrameTimesWatcher.waitForFinished();
     cancelExport();
 }
 
@@ -410,7 +414,7 @@ bool Editor::loadBundle()
         if (!m_error.isEmpty()) return false;
     } else {
         QString name = QFileInfo(m_bundlePath).fileName();
-        if (name.endsWith(QLatin1String(".omareel"))) name.chop(9);
+        if (name.endsWith(QLatin1String(".omareel"))) name.chop(8);
         else if (name.endsWith(QLatin1String(".omarecord"))) name.chop(10);
         m_project = Project::defaults(name, m_sourceDuration);
         m_project.camera.enabled = m_hasCamera;
@@ -1249,16 +1253,34 @@ void Editor::updatePlayheadPosition()
     if (!playing() || m_scrubbing || m_project.clips.isEmpty()
         || !m_playheadClock.isValid()) return;
     const Clip &clip = m_project.clips[std::clamp(m_activeClip, 0, int(m_project.clips.size()) - 1)];
-    const double clipEnd = ClipTimeline(m_project.clips).outputTime(m_activeClip, clip.out);
+    const ClipTimeline timeline(m_project.clips);
+    const double clipEnd = timeline.outputTime(m_activeClip, clip.out);
     const double limit = std::min(clipEnd, hasPlaybackRange()
         ? m_playbackRangeEnd - 0.001 : duration());
     // A decoded frame supplies the clock origin. Interpolate between frames, but stop
     // within two frame intervals if decoding stalls instead of racing ahead of the video.
-    const double maxLead = std::max(0.05, 2.0 / std::max(1.0, m_fps));
+    // Where the screen stood still the recording has no frames, and the clock runs on to the
+    // next one.
+    double maxLead = std::max(0.05, 2.0 / std::max(1.0, m_fps));
+    if (!clip.isMedia()) {
+        const double anchor = clip.in
+            + (m_playheadClockPosition - timeline.outputTime(m_activeClip, clip.in)) * clip.speed;
+        maxLead += std::max(0.0, nextScreenFrameTime(anchor) - anchor) / clip.speed;
+    }
     const double elapsed = std::min(m_playheadClock.elapsed() / 1000.0, maxLead);
     const double target = std::max({m_playheadPosition, m_outputPosition,
                                     m_playheadClockPosition + elapsed});
     setPlayheadPosition(std::min(target, limit));
+}
+
+// The recording's next frame after sourceTime; its last frame lasts to the end. Until the frame
+// times are known, every frame is taken to be the last before a change.
+double Editor::nextScreenFrameTime(double sourceTime) const
+{
+    if (m_screenFrameTimes.isEmpty()) return sourceTime;
+    const auto next = std::upper_bound(m_screenFrameTimes.cbegin(), m_screenFrameTimes.cend(),
+                                       sourceTime + 0.0005);
+    return next == m_screenFrameTimes.cend() ? std::max(sourceTime, m_sourceDuration) : *next;
 }
 
 void Editor::flushScrubSeek()
@@ -1346,14 +1368,22 @@ void Editor::seekBoundary(int direction)
 void Editor::handlePlayerPosition(qint64 milliseconds)
 {
     if (m_internalSeek || m_scrubbing || m_project.clips.isEmpty()) return;
-    const double source = milliseconds / 1000.0;
+    const Clip &clip = m_project.clips[std::clamp(m_activeClip, 0, int(m_project.clips.size()) - 1)];
+    double source = milliseconds / 1000.0;
+    // Through a still stretch of the recording the player holds its last frame's time while the
+    // playhead runs on; the camera, the clip's end and the position follow the playhead.
+    if (playing() && !clip.isMedia()) {
+        const double playheadSource = clip.in + (m_playheadPosition
+            - ClipTimeline(m_project.clips).outputTime(m_activeClip, clip.in)) * clip.speed;
+        if (playheadSource >= clip.in - 0.001 && playheadSource <= clip.out + 0.001)
+            source = std::max(source, std::min(playheadSource, clip.out));
+    }
     const double mapped = sourceToOutput(source, m_activeClip);
     if (hasPlaybackRange() && playing() && mapped >= m_playbackRangeEnd - 0.001) {
         pause();
         seek(m_playbackRangeEnd);
         return;
     }
-    const Clip &clip = m_project.clips[std::clamp(m_activeClip, 0, int(m_project.clips.size()) - 1)];
     if (!clip.isMedia()) syncCamera(source);
     if (playing() && source >= clip.out - 0.004) {
         advanceClip();

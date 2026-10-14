@@ -21,7 +21,9 @@ omareel --version
 With no command, Omareel opens its launcher. `record` is a toggle: it starts a recording when
 idle and stops the current recording when one is active. Capture omits the system cursor and
 stores raw input events beside the video so the editor and exporter can render cursor motion,
-clicks, and zooms non-destructively.
+clicks, and zooms non-destructively. Hyprland draws a software cursor into the screen image,
+where capture would record it, and by default uses one on NVIDIA whenever a monitor has VRR on;
+while recording, Omareel sets `cursor:no_hardware_cursors` to 0 and restores it afterwards.
 
 ## Commands
 

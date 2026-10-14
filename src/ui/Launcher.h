@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QCameraDevice>
+#include <QMediaDevices>
 #include <QObject>
 #include <QTimer>
 #include <QVariantList>
@@ -111,6 +112,9 @@ private:
     QString m_selfViewSize = QStringLiteral("M");
     QVariantList m_webcamDevices;
     QList<QCameraDevice> m_cameraDevices;
+    QMediaDevices m_mediaDevices;
+    // The camera last picked, selected again whenever it is plugged in.
+    QString m_chosenWebcamDevice;
     bool m_startingRecording = false;
     bool m_countdownBeforeRecording = false;
     bool m_quitWhenStarted = false;

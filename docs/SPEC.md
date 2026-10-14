@@ -100,9 +100,10 @@ When enabled, the recording bar owns a Qt Multimedia capture session. One camera
 the live bar preview and a bounded ffmpeg pipe worker, so the device is opened only once. The bar is also launched
 as a hidden capture host for `--no-bar`; this keeps camera ownership in an existing GUI process
 without turning the recording daemon into a GUI application. The first frame admitted for recording records the
-monotonic timestamp in `camera.mp4.ts`. If no frame arrives within two seconds, the bar releases the
-device and the daemon starts the V4L2 fallback capture. `capture.json.camera.backend` records
-`ffmpeg-pipe` or `v4l2-fallback`, along with the device, dimensions, frame rate, first-frame
+monotonic timestamp in `camera.mp4.ts`. Some cameras take seconds to start streaming, so the bubble
+says "Starting camera…" until the first frame; if none arrives within ten seconds, the bar releases
+the device and the recording continues without the camera. `capture.json.camera.backend` records
+`ffmpeg-pipe`, along with the device, dimensions, frame rate, first-frame
 timestamp, rotation, and horizontal flip. Rotation and flip affect previews and rendering but are
 not baked into `camera.mp4`.
 

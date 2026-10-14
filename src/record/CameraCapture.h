@@ -8,6 +8,7 @@
 #include <memory>
 
 class QCamera;
+class QCameraDevice;
 class QMediaCaptureSession;
 class QVideoSink;
 class QTimer;
@@ -37,6 +38,9 @@ struct CameraRawFrame {
 };
 CameraRawFrame packCameraFrame(QVideoFrame frame);
 qint64 cameraFrameDeadlineUs(qint64 firstFrameUs, qint64 frameNumber);
+// Whether the camera has a format CameraCapture records from (30 fps or more). IR sensors that
+// sit beside a laptop's webcam don't.
+bool cameraCanRecord(const QCameraDevice &device);
 class CameraEncoder;
 
 class CameraCapture : public QObject

@@ -229,6 +229,57 @@ private slots:
                                                   QDir::Files | QDir::Hidden), QStringList());
     }
 
+    void clipsStartingOnAStillScreenShowTheFrameOnScreen()
+    {
+        if (QStandardPaths::findExecutable(QStringLiteral("ffmpeg")).isEmpty()
+            || QStandardPaths::findExecutable(QStringLiteral("ffprobe")).isEmpty())
+            QSKIP("ffmpeg/ffprobe unavailable");
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        // Like a native capture of a screen that sat still: red frames until 0.5 s, then nothing
+        // until the screen turns blue at 2.5 s. Encoded as the recorder does, with gaps kept.
+        const QString bundle = temporary.filePath(QStringLiteral("still.omareel"));
+        QVERIFY(QDir().mkpath(bundle));
+        QProcess makeVideo;
+        makeVideo.start(QStringLiteral("ffmpeg"), {QStringLiteral("-y"), QStringLiteral("-v"), QStringLiteral("error"),
+            QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+            QStringLiteral("color=c=red:size=640x360:rate=30:duration=1.5[r];"
+                           "color=c=blue:size=640x360:rate=30:duration=1.5[b];[r][b]concat=n=2"),
+            QStringLiteral("-vf"), QStringLiteral("select='lt(t\\,0.5)+gte(t\\,2.5)'"),
+            QStringLiteral("-c:v"), QStringLiteral("libx264"), QStringLiteral("-bf"), QStringLiteral("0"),
+            QStringLiteral("-g"), QStringLiteral("30"), QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"),
+            QStringLiteral("-fps_mode"), QStringLiteral("vfr"), QStringLiteral("-enc_time_base"),
+            QStringLiteral("1/30"), QDir(bundle).filePath(QStringLiteral("screen.mp4"))});
+        QVERIFY(makeVideo.waitForFinished(30000) && makeVideo.exitCode() == 0);
+        QFile capture(QDir(bundle).filePath(QStringLiteral("capture.json")));
+        QVERIFY(capture.open(QIODevice::WriteOnly));
+        capture.write(R"({"fps":30,"first_frame_us":1000})");
+        capture.close();
+        QFile input(QDir(bundle).filePath(QStringLiteral("input.jsonl")));
+        QVERIFY(input.open(QIODevice::WriteOnly));
+        input.close();
+
+        // The first clip, trimmed into the still part, has no frame of its own; the second starts
+        // half a second before the screen changes.
+        Project project = Project::defaults(QStringLiteral("Still"), 3.0);
+        project.clips = {Clip{QStringLiteral("a"), 1.0, 2.0, 1.0},
+                         Clip{QStringLiteral("b"), 2.0, 3.0, 1.0}};
+        project.background.type = QStringLiteral("color");
+        project.background.color = QColor(QStringLiteral("#00c000"));
+        project.cursor.visible = false;
+        QString error;
+        QVERIFY2(project.save(QDir(bundle).filePath(QStringLiteral("project.json")), &error),
+                 qPrintable(error));
+
+        const QString output = temporary.filePath(QStringLiteral("still.mp4"));
+        QVERIFY2(exportBundle(bundle, output, &error), qPrintable(error));
+        QVERIFY(qAbs(probeDuration(output) - 2.0) < 0.05);
+        QVERIFY(isRed(pixelAt(output, 0.5, 320, 180)));
+        // The second clip holds red until its source reaches 2.5 s, 1.5 s into the export.
+        QVERIFY(isRed(pixelAt(output, 1.3, 320, 180)));
+        QVERIFY(isBlue(pixelAt(output, 1.7, 320, 180)));
+    }
+
     void cameraLayoutsRenderFullFrame()
     {
         if (QStandardPaths::findExecutable(QStringLiteral("ffmpeg")).isEmpty()

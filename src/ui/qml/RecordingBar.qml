@@ -195,6 +195,11 @@ ApplicationWindow {
                     visible: false
                     layer.enabled: true
                 }
+                Rectangle {
+                    anchors.fill: parent
+                    visible: !recordingBar.cameraReady
+                    color: Qt.alpha(theme.surface, .94)
+                }
                 Item {
                     id: cameraRotated
                     anchors.centerIn: parent
@@ -224,8 +229,9 @@ ApplicationWindow {
             Label {
                 anchors.centerIn: parent
                 width: parent.width - 20
-                visible: recordingBar.cameraError !== ""
-                text: recordingBar.cameraError
+                visible: text !== ""
+                text: recordingBar.cameraError !== "" ? recordingBar.cameraError
+                    : recordingBar.cameraReady ? "" : "Starting camera…"
                 wrapMode: Text.WordWrap
                 horizontalAlignment: Text.AlignHCenter
                 color: theme.foreground

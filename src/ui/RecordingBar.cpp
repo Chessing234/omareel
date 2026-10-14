@@ -478,6 +478,7 @@ void RecordingBar::createCamera(const QJsonObject &state)
         bundle.isEmpty() ? QString() : bundle + QStringLiteral("/camera.mp4"),
         bundle.isEmpty() ? QString() : bundle + QStringLiteral("/camera.mp4.ts"), this);
     connect(m_cameraCapture.get(), &CameraCapture::readyChanged, this, [this] {
+        emit cameraReadyChanged();
         if (!m_cameraCapture->ready()) return;
         cameraState(QJsonObject{
             {QStringLiteral("camera_status"), QStringLiteral("ready")},
@@ -504,4 +505,10 @@ void RecordingBar::createCamera(const QJsonObject &state)
                 ? QStringLiteral("failed") : QStringLiteral("stopped")}
         });
     });
+    emit cameraReadyChanged();
+}
+
+bool RecordingBar::cameraReady() const
+{
+    return m_cameraCapture && m_cameraCapture->ready();
 }

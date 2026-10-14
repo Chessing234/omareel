@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QList>
 #include <QString>
 
 namespace Omareel {
@@ -15,5 +16,9 @@ struct VideoInfo {
 };
 
 VideoInfo probeVideo(const QString &path, QString *error = nullptr);
+
+// When each frame of the first video stream starts, in seconds and in order; empty when the file
+// can't be read. Native screen captures only hold a frame where the screen changed.
+QList<double> probeFrameTimes(const QString &path);
 
 } // namespace Omareel

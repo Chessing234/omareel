@@ -1146,6 +1146,8 @@ private slots:
 
         Editor editor(bundle);
         QVERIFY2(editor.isValid(), qPrintable(editor.errorString()));
+        QCOMPARE(editor.projectMap().value(QStringLiteral("name")).toString(),
+                 QStringLiteral("camera-default"));
         const QVariantMap camera = editor.projectMap().value(QStringLiteral("camera")).toMap();
         QCOMPARE(camera.value(QStringLiteral("rotation")).toInt(), 270);
         QVERIFY(camera.value(QStringLiteral("flipHorizontal")).toBool());
@@ -1324,6 +1326,68 @@ private slots:
         QCOMPARE(paused, 0);
         editor.pause();
         QTRY_COMPARE_WITH_TIMEOUT(editor.cameraPlaybackStateForTests(), QMediaPlayer::PausedState, 2000);
+    }
+
+    void playbackRunsThroughAStillScreen()
+    {
+        // A native capture of a screen that stood still from 0.3 s to 2.5 s has no frames there.
+        const QString bundle = m_temporary.filePath(QStringLiteral("still-screen.omareel"));
+        QVERIFY(QDir().mkpath(bundle));
+        QProcess makeScreen;
+        makeScreen.start(QStringLiteral("ffmpeg"), {QStringLiteral("-y"), QStringLiteral("-v"), QStringLiteral("error"),
+            QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"), QStringLiteral("testsrc2=size=320x180:rate=30"),
+            QStringLiteral("-t"), QStringLiteral("3"), QStringLiteral("-vf"), QStringLiteral("select='lt(t\\,0.3)+gte(t\\,2.5)'"),
+            QStringLiteral("-c:v"), QStringLiteral("libx264"), QStringLiteral("-bf"), QStringLiteral("0"),
+            QStringLiteral("-fps_mode"), QStringLiteral("vfr"), QStringLiteral("-enc_time_base"), QStringLiteral("1/30"),
+            QDir(bundle).filePath(QStringLiteral("screen.mp4"))});
+        QVERIFY(makeScreen.waitForFinished(30000) && makeScreen.exitCode() == 0);
+        QProcess makeCamera;
+        makeCamera.start(QStringLiteral("ffmpeg"), {QStringLiteral("-y"), QStringLiteral("-v"), QStringLiteral("error"),
+            QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"), QStringLiteral("testsrc2=size=320x180:rate=30"),
+            QStringLiteral("-t"), QStringLiteral("3"), QStringLiteral("-c:v"), QStringLiteral("libx264"),
+            QDir(bundle).filePath(QStringLiteral("camera.mp4"))});
+        QVERIFY(makeCamera.waitForFinished(30000) && makeCamera.exitCode() == 0);
+        QVERIFY(QFile::copy(QDir(m_bundle).filePath(QStringLiteral("input.jsonl")),
+                            QDir(bundle).filePath(QStringLiteral("input.jsonl"))));
+        QFile capture(QDir(bundle).filePath(QStringLiteral("capture.json")));
+        QVERIFY(capture.open(QIODevice::WriteOnly));
+        capture.write(R"({"fps":30,"first_frame_us":1000000,"camera":{"first_frame_us":1000000}})");
+        capture.close();
+
+        Editor editor(bundle);
+        QVERIFY2(editor.isValid(), qPrintable(editor.errorString()));
+        QVideoSink sink;
+        QVideoSink cameraSink;
+        QObject holder;
+        QObject cameraHolder;
+        holder.setProperty("videoSink", QVariant::fromValue(&sink));
+        cameraHolder.setProperty("videoSink", QVariant::fromValue(&cameraSink));
+        editor.attachVideoOutput(&holder);
+        editor.attachCameraVideoOutput(&cameraHolder);
+        QTRY_VERIFY_WITH_TIMEOUT(editor.playerMediaStatusForTests() >= QMediaPlayer::LoadedMedia, 15000);
+        QTRY_VERIFY_WITH_TIMEOUT(editor.screenFrameTimesReadyForTests(), 15000);
+        QTRY_VERIFY_WITH_TIMEOUT(!editor.playing(), 5000);
+        editor.seek(0.1);
+        editor.play();
+        QTRY_VERIFY_WITH_TIMEOUT(editor.cameraPlaybackStateForTests() == QMediaPlayer::PlayingState, 5000);
+        // The playhead once stopped 50 ms after the last frame, and the camera was pulled back to
+        // the screen's frozen position over and over.
+        qint64 camera = editor.cameraPositionMsForTests();
+        int cameraSteps = 0;
+        QElapsedTimer elapsed;
+        elapsed.start();
+        while (elapsed.elapsed() < 1500 && editor.playing()) {
+            QTest::qWait(10);
+            const qint64 now = editor.cameraPositionMsForTests();
+            QVERIFY2(now >= camera - 40, qPrintable(QStringLiteral("camera went back from %1 to %2 ms")
+                                                        .arg(camera).arg(now)));
+            if (now > camera) ++cameraSteps;
+            camera = now;
+        }
+        QVERIFY2(editor.position() > 1.2, qPrintable(QString::number(editor.position())));
+        QVERIFY2(camera > 1200, qPrintable(QString::number(camera)));
+        QVERIFY(cameraSteps > 10);
+        editor.pause();
     }
 
     void cameraOverlayGrowsToFullFrame()

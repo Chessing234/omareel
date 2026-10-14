@@ -4,6 +4,7 @@
 #include "core/RecordingPreferences.h"
 #include "record/Recorder.h"
 #include "record/CaptureExclusion.h"
+#include "record/CameraCapture.h"
 #include <QGuiApplication>
 
 #include <QCoreApplication>
@@ -16,6 +17,7 @@
 #include <QProcessEnvironment>
 #include <QSet>
 #include <QUrl>
+#include <algorithm>
 #include <ctime>
 #include <csignal>
 #include <unistd.h>
@@ -41,6 +43,7 @@ Launcher::Launcher(QObject *parent): QObject(parent)
     m_microphoneDevice = preferences.microphoneDevice;
     m_webcam = preferences.webcamEnabled;
     m_webcamDevice = preferences.webcamDevice;
+    m_chosenWebcamDevice = preferences.webcamDevice;
     m_webcamHeight = preferences.webcamHeight;
     m_webcamRotation = preferences.webcamRotation;
     m_webcamFlipHorizontal = preferences.webcamFlipHorizontal;
@@ -49,6 +52,7 @@ Launcher::Launcher(QObject *parent): QObject(parent)
     m_countdownBeforeRecording = preferences.countdownBeforeRecording;
     refreshAudioDevices();
     refreshWebcamDevices();
+    connect(&m_mediaDevices, &QMediaDevices::videoInputsChanged, this, &Launcher::refreshWebcamDevices);
     connect(&m_recordingTimer, &QTimer::timeout, this, &Launcher::refreshRecording);
     m_recordingTimer.start(50);
     refreshRecording();
@@ -111,6 +115,7 @@ void Launcher::setWebcamDevice(const QString &value)
 {
     if (value.isEmpty() || m_webcamDevice == value) return;
     m_webcamDevice = value;
+    m_chosenWebcamDevice = value;
     saveRecordingPreferences();
     if (m_webcam) Recorder::sendHostCommand("configure");
     emit recordingPreferencesChanged();
@@ -226,6 +231,7 @@ void Launcher::refreshWebcamDevices()
     QSet<QString> seen;
     m_cameraDevices = QMediaDevices::videoInputs();
     for (const QCameraDevice &camera : m_cameraDevices) {
+        if (!cameraCanRecord(camera)) continue;
         QString path = QString::fromUtf8(camera.id());
         if (!path.startsWith(QLatin1String("/dev/video"))) {
             const QString id = path;
@@ -237,15 +243,26 @@ void Launcher::refreshWebcamDevices()
         devices << QVariantMap{{QStringLiteral("value"), path},
             {QStringLiteral("text"), QStringLiteral("%1 (%2)").arg(camera.description(), path)}};
     }
-    if (devices.isEmpty() && QFileInfo::exists(m_webcamDevice))
+    if (m_cameraDevices.isEmpty() && QFileInfo::exists(m_webcamDevice))
         devices << QVariantMap{{QStringLiteral("value"), m_webcamDevice},
                                {QStringLiteral("text"), m_webcamDevice}};
-    bool selectedFound = false;
-    for (const QVariant &device : devices)
-        selectedFound = selectedFound || device.toMap().value(QStringLiteral("value")) == m_webcamDevice;
-    if (!selectedFound && !devices.isEmpty()) m_webcamDevice = devices.first().toMap().value(QStringLiteral("value")).toString();
+    const auto listed = [&devices](const QString &path) {
+        return std::any_of(devices.cbegin(), devices.cend(), [&path](const QVariant &device) {
+            return device.toMap().value(QStringLiteral("value")).toString() == path;
+        });
+    };
+    const QString selected = listed(m_chosenWebcamDevice) ? m_chosenWebcamDevice
+        : listed(m_webcamDevice) || devices.isEmpty() ? m_webcamDevice
+        : devices.first().toMap().value(QStringLiteral("value")).toString();
     m_webcamDevices = devices;
     emit webcamDevicesChanged();
+    if (selected == m_webcamDevice) return;
+    m_webcamDevice = selected;
+    // The self-view and `omareel record` read the saved camera, so a camera plugged in or pulled
+    // out while the launcher is open moves them with it.
+    saveRecordingPreferences();
+    if (m_webcam && !m_recording) Recorder::sendHostCommand("configure");
+    emit recordingPreferencesChanged();
 }
 
 void Launcher::startSelfViewHost()

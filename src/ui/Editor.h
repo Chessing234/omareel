@@ -183,6 +183,8 @@ public:
     QMediaPlayer::MediaStatus playerMediaStatusForTests() const { return m_player.mediaStatus(); }
     qint64 playerPositionMsForTests() const { return m_player.position(); }
     QMediaPlayer::PlaybackState cameraPlaybackStateForTests() const { return m_cameraPlayer.playbackState(); }
+    qint64 cameraPositionMsForTests() const { return m_cameraPlayer.position(); }
+    bool screenFrameTimesReadyForTests() const { return !m_screenFrameTimes.isEmpty(); }
     QMediaPlayer::PlaybackState mediaPlaybackStateForTests() const { return m_mediaPlayer.playbackState(); }
     Q_INVOKABLE void playPause();
     Q_INVOKABLE void play();
@@ -298,6 +300,7 @@ private:
     void flushScrubSeek();
     void handlePlayerPosition(qint64 milliseconds);
     void updatePlayheadPosition();
+    double nextScreenFrameTime(double sourceTime) const;
     void resetPlayheadClock(double outputTime);
     void setPlayheadPosition(double outputTime);
     double clampPlaybackPosition(double outputTime) const;
@@ -377,6 +380,10 @@ private:
     double m_playheadPosition = 0.0;
     double m_playheadClockPosition = 0.0;
     QElapsedTimer m_playheadClock;
+    // The screen recording's frame times. A native capture holds each frame until the screen
+    // changes, and the player's position stands still on it until the next one.
+    QList<double> m_screenFrameTimes;
+    QFutureWatcher<QList<double>> m_screenFrameTimesWatcher;
     double m_playbackRangeStart = -1.0;
     double m_playbackRangeEnd = -1.0;
     int m_activeClip = 0;

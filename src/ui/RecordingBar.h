@@ -48,6 +48,7 @@ class RecordingBar : public QObject
     Q_PROPERTY(int cameraRotation READ cameraRotation NOTIFY cameraSettingsChanged)
     Q_PROPERTY(bool cameraFlipHorizontal READ cameraFlipHorizontal NOTIFY cameraSettingsChanged)
     Q_PROPERTY(QString cameraError READ cameraError NOTIFY cameraErrorChanged)
+    Q_PROPERTY(bool cameraReady READ cameraReady NOTIFY cameraReadyChanged)
     Q_PROPERTY(bool selfViewVisible READ selfViewVisible NOTIFY selfViewVisibilityChanged)
     Q_PROPERTY(bool selfViewSafe READ selfViewSafe NOTIFY selfViewVisibilityChanged)
     Q_PROPERTY(QString selfViewMonitor READ selfViewMonitor NOTIFY selfViewPlacementChanged)
@@ -69,6 +70,7 @@ public:
     int cameraRotation() const { return m_cameraRotation; }
     bool cameraFlipHorizontal() const { return m_cameraFlipHorizontal; }
     QString cameraError() const { return m_cameraError; }
+    bool cameraReady() const;
     bool selfViewVisible() const { return m_selfViewVisible; }
     bool selfViewSafe() const { return m_selfViewSafe; }
     QString selfViewMonitor() const { return m_selfViewMonitor; }
@@ -94,6 +96,7 @@ signals:
     void elapsedChanged();
     void cameraSettingsChanged();
     void cameraErrorChanged();
+    void cameraReadyChanged();
     void selfViewVisibilityChanged();
     void selfViewPlacementChanged();
     void captureStartedChanged();
