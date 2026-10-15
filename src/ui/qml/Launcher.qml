@@ -79,6 +79,8 @@ ApplicationWindow {
         property string iconFile: ""
         property bool selected: false
         property bool hasMenu: false
+        // A level meter beside the status dot, 0 to 1; below 0 hides it.
+        property real level: -1
         signal menuRequested()
         Layout.fillWidth: true
         Layout.preferredHeight: 28
@@ -100,6 +102,18 @@ ApplicationWindow {
                 font.pixelSize: theme.font.bodySmall
                 font.weight: Font.Normal
                 verticalAlignment: Text.AlignVCenter
+            }
+            Rectangle {
+                visible: row.level >= 0
+                Layout.preferredWidth: 32; Layout.preferredHeight: 4
+                radius: 2
+                color: Qt.alpha(theme.textFaint, .35)
+                Rectangle {
+                    width: parent.width * Math.max(0, row.level)
+                    height: parent.height
+                    radius: 2
+                    color: theme.accent
+                }
             }
             Rectangle {
                 width: 7; height: 7; radius: 4
@@ -313,13 +327,15 @@ ApplicationWindow {
                     spacing: 8
                     OmButton {
                         width: 104; height: 32
-                        text: "Stop"
+                        text: launcher.stoppingRecording ? "Saving…" : "Stop"
+                        enabled: !launcher.stoppingRecording
                         primary: true; bordered: true
                         onClicked: launcher.stopRecording()
                     }
                     OmButton {
                         id: discardButton
                         width: 104; height: 32
+                        enabled: !launcher.stoppingRecording
                         property bool armed: false
                         text: armed ? "Discard?" : "Discard"
                         destructive: armed; bordered: true
@@ -400,6 +416,7 @@ ApplicationWindow {
             CaptureRow {
                 id: microphoneRow
                 text: "Microphone"; iconFile: "mic.svg"; selected: launcher.microphone; hasMenu: true
+                level: launcher.microphone && !window.busy ? launcher.microphoneLevel : -1
                 onClicked: launcher.microphone = !launcher.microphone
                 onMenuRequested: microphoneMenu.popup(microphoneRow, 28, microphoneRow.height + 4)
             }

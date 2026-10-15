@@ -11,6 +11,8 @@ struct RecordingPreferences {
     QString microphoneDevice = QStringLiteral("default_input");
     bool webcamEnabled = false;
     QString webcamDevice = QStringLiteral("/dev/video2");
+    // The camera last picked in the launcher; webcamDevice stands in for it while it is unplugged.
+    QString webcamChosenDevice = webcamDevice;
     int webcamHeight = 1080;
     int webcamRotation = 0;
     bool webcamFlipHorizontal = false;

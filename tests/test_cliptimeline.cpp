@@ -37,6 +37,38 @@ private slots:
         QCOMPARE(timeline.sourceTime(0.0), 3.5);
     }
 
+    void insertedVideosSitBetweenRecordingClips()
+    {
+        Clip insert{"m", 2.0, 4.5, 1.0};
+        insert.media = QStringLiteral("media/demo.mp4");
+        // Recording 0-3, a 2.5 s insert from 2 s into the video, recording 5-7 at 2x.
+        ClipTimeline timeline({Clip{"a", 0.0, 3.0, 1.0}, insert, Clip{"b", 5.0, 7.0, 2.0}});
+        QCOMPARE(timeline.totalDuration(), 6.5);
+        double start = -1.0;
+        QCOMPARE(timeline.clipAt(1.0, &start), 0);
+        QCOMPARE(start, 0.0);
+        QCOMPARE(timeline.clipAt(3.0, &start), 1);
+        QCOMPARE(start, 3.0);
+        QCOMPARE(timeline.clipAt(5.6, &start), 2);
+        QCOMPARE(start, 5.5);
+        QCOMPARE(timeline.clipAt(99.0), 2);
+        QCOMPARE(ClipTimeline().clipAt(0.0), -1);
+        // Clip-local time inside the insert, and the recording time it interrupts.
+        QCOMPARE(timeline.sourceTime(4.0), 3.0);
+        QCOMPARE(timeline.recordingSourceTime(4.0), 3.0);
+        QCOMPARE(timeline.recordingSourceTime(1.5), 1.5);
+        QCOMPARE(timeline.recordingSourceTime(6.0), 6.0);
+        ClipTimeline leading({insert, Clip{"b", 5.0, 7.0, 1.0}});
+        QCOMPARE(leading.recordingSourceTime(1.0), 5.0);
+        // Recording neighbours bound a recording clip, across the insert.
+        QCOMPARE(timeline.recordingBounds(0, 9.0), (QPair<double, double>{0.0, 5.0}));
+        QCOMPARE(timeline.recordingBounds(2, 9.0), (QPair<double, double>{3.0, 9.0}));
+        // Recording spans never map into the insert, whose in/out overlap them numerically.
+        QCOMPARE(timeline.outputRange(2.5, 4.5), (QPair<double, double>{2.5, 3.0}));
+        QCOMPARE(timeline.outputRange(3.5, 4.5), (QPair<double, double>{-1.0, -1.0}));
+        QCOMPARE(timeline.outputRange(4.0, 6.0), (QPair<double, double>{5.5, 6.0}));
+    }
+
     void sourceSpanCoversWhatSurvivesTheCuts()
     {
         // Source 1.438–1.903 and everything after 2.245 were cut.

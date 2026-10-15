@@ -171,6 +171,8 @@ void RecordingBar::poll()
             m_selfViewX = m_standbyPosition.x();
             m_selfViewY = m_standbyPosition.y();
             m_cameraRecordRequested = m_cameraStopRequested = false;
+            m_stopping = false;
+            emit stoppingChanged();
             emit captureStartedChanged();
             emit selfViewPlacementChanged();
             emit selfViewVisibilityChanged();
@@ -208,6 +210,11 @@ void RecordingBar::poll()
         && !property("captureStageLogged").toBool()) {
         setProperty("captureStageLogged", true);
         debugBarStage(QStringLiteral("capture_seen_by_bar"));
+    }
+    // Stop can also come from the keybind or the REC indicator.
+    if (state.value(QStringLiteral("stopping")).toBool(false) && !m_stopping) {
+        m_stopping = true;
+        emit stoppingChanged();
     }
     const bool countdownActive = state.value(QStringLiteral("countdown_active")).toBool(false);
     const qint64 countdownEndUs = state.value(QStringLiteral("countdown_end_us"))
@@ -264,6 +271,7 @@ void RecordingBar::poll()
         m_cameraStopRequested = true;
         m_cameraCapture->stop();
     }
+    if (m_stopping) return;
     const qint64 seconds = std::max<qint64>(0, barMonotonicUs() - Recorder::recordingStartedUs()) / 1000000;
     const QString elapsed = QStringLiteral("%1:%2").arg(seconds / 60, 2, 10, QLatin1Char('0'))
                                                    .arg(seconds % 60, 2, 10, QLatin1Char('0'));
@@ -395,7 +403,9 @@ void RecordingBar::setSelfViewVisible(bool visible)
 
 void RecordingBar::stop()
 {
-    Recorder::signalExisting(false);
+    if (m_stopping || !Recorder::signalExisting(false)) return;
+    m_stopping = true;
+    emit stoppingChanged();
 }
 
 void RecordingBar::cancel()
@@ -478,6 +488,7 @@ void RecordingBar::createCamera(const QJsonObject &state)
         bundle.isEmpty() ? QString() : bundle + QStringLiteral("/camera.mp4"),
         bundle.isEmpty() ? QString() : bundle + QStringLiteral("/camera.mp4.ts"), this);
     connect(m_cameraCapture.get(), &CameraCapture::readyChanged, this, [this] {
+        emit cameraReadyChanged();
         if (!m_cameraCapture->ready()) return;
         cameraState(QJsonObject{
             {QStringLiteral("camera_status"), QStringLiteral("ready")},
@@ -504,4 +515,10 @@ void RecordingBar::createCamera(const QJsonObject &state)
                 ? QStringLiteral("failed") : QStringLiteral("stopped")}
         });
     });
+    emit cameraReadyChanged();
+}
+
+bool RecordingBar::cameraReady() const
+{
+    return m_cameraCapture && m_cameraCapture->ready();
 }

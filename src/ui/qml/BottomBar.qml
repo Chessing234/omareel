@@ -21,7 +21,8 @@ Rectangle {
     readonly property var shortcuts: [
         {key:"Space", action:"Play / pause"}, {key:"← / →", action:"Step one frame"},
         {key:"Shift ← / →", action:"Jump one second"}, {key:"S", action:"Split at playhead"},
-        {key:"Z", action:"Add zoom"}, {key:"Delete", action:"Remove selection"},
+        {key:"Z", action:"Add zoom"}, {key:"I", action:"Insert a video"},
+        {key:"Delete", action:"Remove selection"},
         {key:"Backspace", action:"Remove range"},
         {key:"Ctrl Z", action:"Undo"}, {key:"Ctrl Shift Z", action:"Redo"},
         {key:"Ctrl S", action:"Save"}, {key:"Ctrl E", action:"Export"},
@@ -41,6 +42,8 @@ Rectangle {
         else aspectBox.popup.open()
     }
     function openShortcuts() { shortcutsSheet.open() }
+    function openInsertDialog() { if (!editor.importing) insertDialog.open() }
+    InsertClipDialog { id: insertDialog }
 
     Rectangle {
         anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
@@ -95,7 +98,7 @@ Rectangle {
         }
 
         RowLayout {
-            Layout.minimumWidth: 188; Layout.preferredWidth: 188; Layout.maximumWidth: 188
+            Layout.minimumWidth: 228; Layout.preferredWidth: 228; Layout.maximumWidth: 228
             Layout.alignment: Qt.AlignHCenter
             spacing: 10
             IconToolButton {
@@ -129,6 +132,16 @@ Rectangle {
                 ToolTip.visible: hovered
                 ToolTip.text: "Split at playhead (S)"
                 onClicked: editor.splitAtPlayhead()
+            }
+            IconToolButton {
+                objectName: "insertClipToolButton"
+                icon.source: "qrc:/omareel/assets/icons/lucide/film.svg"
+                icon.width: 19; icon.height: 19
+                enabled: !editor.importing
+                Accessible.name: "Insert video"
+                ToolTip.visible: hovered
+                ToolTip.text: "Insert a video at the playhead (I)"
+                onClicked: root.openInsertDialog()
             }
         }
 

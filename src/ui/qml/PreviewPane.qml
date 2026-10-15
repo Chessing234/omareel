@@ -96,6 +96,7 @@ FocusScope {
                 Component.onCompleted: {
                     editor.attachVideoOutput(videoOutput)
                     editor.attachCameraVideoOutput(cameraVideoOutput)
+                    editor.attachMediaVideoOutput(mediaVideoOutput)
                 }
             }
             MouseArea {
@@ -221,6 +222,47 @@ FocusScope {
                 color: theme.foreground
                 font.pixelSize: theme.font.body
                 font.weight: Font.Medium
+            }
+        }
+        Rectangle {
+            id: importNotice
+            objectName: "importNotice"
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.top: previewFrame.top
+            anchors.topMargin: 14
+            visible: editor.importing || editor.importError.length > 0
+            color: theme.popupBackground
+            border.width: 2
+            border.color: editor.importError.length > 0 ? theme.record : theme.popupBorder
+            radius: theme.radius
+            width: Math.min(previewFrame.width - 28, importRow.implicitWidth + 20)
+            height: 30
+            z: 40
+            Row {
+                id: importRow
+                anchors.centerIn: parent
+                width: Math.min(implicitWidth, importNotice.width - 20)
+                spacing: 10
+                Label {
+                    width: Math.min(implicitWidth, importNotice.width - 20
+                        - (dismissImport.visible ? dismissImport.width + importRow.spacing : 0))
+                    anchors.verticalCenter: parent.verticalCenter
+                    elide: Text.ElideRight
+                    text: editor.importing ? "Adding clip…" : editor.importError
+                    color: theme.foreground
+                    font.pixelSize: theme.font.body
+                    font.weight: Font.Medium
+                }
+                IconToolButton {
+                    id: dismissImport
+                    visible: !editor.importing
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 20; height: 20
+                    icon.source: "qrc:/omareel/assets/icons/lucide/x.svg"
+                    icon.width: 14; icon.height: 14
+                    Accessible.name: "Dismiss"
+                    onClicked: editor.clearImportError()
+                }
             }
         }
         }

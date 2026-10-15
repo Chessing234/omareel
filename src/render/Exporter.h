@@ -36,6 +36,8 @@ class CompositionState : public QObject
     Q_PROPERTY(double time MEMBER time NOTIFY changed)
     Q_PROPERTY(QVariantMap project MEMBER project NOTIFY changed)
     Q_PROPERTY(QVariantMap zoom MEMBER zoom NOTIFY changed)
+    Q_PROPERTY(QVariantMap layout MEMBER layout NOTIFY changed)
+    Q_PROPERTY(QVariantMap media MEMBER media NOTIFY changed)
     Q_PROPERTY(QVariantMap cursor MEMBER cursor NOTIFY changed)
     Q_PROPERTY(QVariantList ripples MEMBER ripples NOTIFY changed)
     Q_PROPERTY(QVariantList keystrokePills MEMBER keystrokePills NOTIFY changed)
@@ -54,6 +56,8 @@ public:
     double time = 0.0;
     QVariantMap project;
     QVariantMap zoom;
+    QVariantMap layout;
+    QVariantMap media;
     QVariantMap cursor;
     QVariantList ripples;
     QVariantList keystrokePills;

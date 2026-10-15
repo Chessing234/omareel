@@ -19,6 +19,29 @@ QByteArray hyprctl(const QStringList &arguments, bool *ok = nullptr)
     if (ok) *ok = success;
     return success ? process.readAllStandardOutput() : QByteArray();
 }
+
+bool setNoHardwareCursors(int value)
+{
+    bool ok = false;
+    hyprctl({"eval", QStringLiteral("hl.config({ cursor = { no_hardware_cursors = %1 } })").arg(value)}, &ok);
+    if (!ok) hyprctl({"keyword", "cursor:no_hardware_cursors", QString::number(value)}, &ok);
+    return ok;
+}
+}
+
+HardwareCursorHold::HardwareCursorHold()
+{
+    bool ok = false;
+    const auto option = QJsonDocument::fromJson(
+        hyprctl({"-j", "getoption", "cursor:no_hardware_cursors"}, &ok)).object();
+    if (!ok || !option.contains("int")) return;
+    const int previous = option.value("int").toInt();
+    if (previous != 0 && setNoHardwareCursors(0)) m_previous = previous;
+}
+
+HardwareCursorHold::~HardwareCursorHold()
+{
+    if (m_previous >= 0) setNoHardwareCursors(m_previous);
 }
 
 bool CaptureExclusion::compatibleHash(const QString &built, const QString &running)

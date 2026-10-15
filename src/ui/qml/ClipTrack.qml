@@ -154,7 +154,7 @@ Item {
                             const revision = editor.videoThumbnailRevision
                             const sourceTime = clipBlock.displayedIn
                                 + (x + width / 2) / root.pixelsPerSecond * clipBlock.modelData.speed
-                            return editor.videoThumbnailUrlForClip(sourceTime,
+                            return editor.clipThumbnailUrl(clipBlock.modelData.id, sourceTime,
                                 clipBlock.displayedIn, clipBlock.displayedOut)
                         }
                     }
@@ -163,7 +163,7 @@ Item {
             Rectangle {
                 anchors.fill: parent
                 z: 2
-                color: "transparent"
+                color: modelData.missing ? Qt.alpha(theme.record, .35) : "transparent"
                 border.width: 1
                 border.color: clipBlock.selected ? theme.accent : theme.normalBorder
                 radius: 0
@@ -244,7 +244,11 @@ Item {
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                     elide: Text.ElideRight
-                    text: "Clip · " + Number(modelData.speed).toFixed(modelData.speed % 1 ? 2 : 0) + "×"
+                    text: (modelData.kind === "media"
+                           ? (modelData.missing ? "Missing · " : "") + modelData.mediaName
+                           : modelData.layout === "camera" ? "Camera"
+                           : modelData.layout === "screen" ? "Screen" : "Clip")
+                        + " · " + Number(modelData.speed).toFixed(modelData.speed % 1 ? 2 : 0) + "×"
                     font.weight: Font.Medium
                     font.pixelSize: theme.font.body
                     color: theme.foreground
@@ -308,9 +312,30 @@ Item {
             }
             Menu {
                 id: speedMenu
-                width: 120
+                readonly property bool layouts: editor.hasCamera && clipBlock.modelData.kind !== "media"
+                width: layouts ? 168 : 120
                 padding: 4
                 background: OmPopupCard { padding: 0 }
+                Repeater {
+                    model: speedMenu.layouts ? [{value:"default", label:"Screen & camera"},
+                        {value:"camera", label:"Camera"}, {value:"screen", label:"Screen"}] : []
+                    delegate: MenuItem {
+                        required property var modelData
+                        height: theme.space.popupRowHeight
+                        text: modelData.label
+                        checkable: true
+                        checked: clipBlock.modelData.layout === modelData.value
+                        indicator: null
+                        contentItem: Text { text: (parent.checked ? "✓  " : "    ") + parent.text; color: parent.highlighted ? theme.menuSelectedText : theme.menuText; font.family: theme.fontFamily; font.pixelSize: theme.font.body; verticalAlignment: Text.AlignVCenter }
+                        onTriggered: editor.setClipLayout(clipBlock.modelData.id, modelData.value)
+                        background: Rectangle { radius: theme.radius; color: parent.highlighted ? theme.menuSelectedBackground : "transparent" }
+                    }
+                }
+                MenuSeparator {
+                    visible: speedMenu.layouts
+                    height: visible ? implicitHeight : 0
+                    contentItem: Rectangle { implicitHeight: 1; color: theme.hairline }
+                }
                 Repeater {
                     model: [0.5,0.75,1,1.2,1.4,1.6,1.8,2,3,4,8,16,24]
                     delegate: MenuItem {
@@ -354,7 +379,7 @@ Item {
                 mouseArea.onPositionChanged: mouse => { if (mouseArea.pressed) {
                     editor.traceInput(mouseArea.objectName, "move", mouse.x, mouse.y)
                     const delta = mouseArea.mapToItem(root, mouse.x, mouse.y).x - leftTrim.pressTrackX
-                    const lower = index > 0 ? editor.clips[index - 1].out : 0
+                    const lower = modelData.lower
                     leftTrim.previewIn = Math.max(lower, Math.min(modelData.out - .1,
                         leftTrim.originalIn + delta / root.pixelsPerSecond * modelData.speed))
                     const actualDelta = (leftTrim.previewIn - leftTrim.originalIn)
@@ -409,8 +434,7 @@ Item {
                 mouseArea.onPositionChanged: mouse => { if (mouseArea.pressed) {
                     editor.traceInput(mouseArea.objectName, "move", mouse.x, mouse.y)
                     const delta = mouseArea.mapToItem(root, mouse.x, mouse.y).x - rightTrim.pressTrackX
-                    const upper = index + 1 < editor.clips.length
-                        ? editor.clips[index + 1].in : editor.sourceDuration
+                    const upper = modelData.upper
                     rightTrim.previewOut = Math.max(modelData.in + .1, Math.min(upper,
                         rightTrim.originalOut + delta / root.pixelsPerSecond * modelData.speed))
                     clipBlock.gestureX = rightTrim.pressBlockX

@@ -7,6 +7,10 @@ Item {
     id: root
     readonly property alias frameSource: video
     readonly property alias videoOutput: nativeVideo
+    // The untransformed video, for effects that copy it.
+    readonly property alias content: videoClip
+    // The exporter finds each frame's FrameSource by this name.
+    property string frameSourceName: "videoFrameSource"
     required property var settings
     required property var crop
     property bool softwareRendering: false
@@ -78,7 +82,7 @@ Item {
         }
         FrameSource {
             id: video
-            objectName: "videoFrameSource"
+            objectName: root.frameSourceName
             anchors.fill: parent
             visible: !root.nativePreview
             cropRect: Qt.rect(root.crop.x, root.crop.y, root.crop.w, root.crop.h)

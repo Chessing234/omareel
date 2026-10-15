@@ -64,44 +64,12 @@ ColumnLayout {
         PanelLabel { text: "Shape" }
         OmButtonGroup {
             Layout.fillWidth: true
-            options: [{value:"round", label:"Round"}, {value:"rounded", label:"Rounded"}, {value:"square", label:"Square"}]
+            objectName: "cameraShapeGroup"
+            options: [{value:"round", label:"Round"}, {value:"square", label:"Square"}, {value:"rectangle", label:"Rectangle"}]
             value: root.camera.shape
             onChanged: value => editor.setProjectValue("camera.shape", value)
         }
-        PanelSlider { visible: root.camera.shape === "rounded"; Layout.fillWidth: true; label: "Corner radius"; path: "camera.radius"; from: 0; to: 80; value: root.camera.radius; stepSize: 1 }
-
-        PanelLabel { text: "Crop" }
-        OmButtonGroup {
-            Layout.fillWidth: true
-            options: [{value:"square", label:"Square"},
-                {value:"original", label:"Original", enabled: root.camera.shape !== "round"}]
-            value: root.camera.shape === "round" ? "square" : root.camera.crop
-            onChanged: value => editor.setProjectValue("camera.crop", value)
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            PanelLabel { text: "Rotation"; Layout.fillWidth: true }
-            OmIconButton {
-                enabled: false; opacity: 1; background: null
-                icon.source: "qrc:/omareel/assets/icons/lucide/rotate-cw.svg"
-                icon.color: theme.foreground
-                icon.width: 15; icon.height: 15
-            }
-        }
-        OmButtonGroup {
-            Layout.fillWidth: true
-            options: [{value:0,label:"0°"}, {value:90,label:"90°"},
-                {value:180,label:"180°"}, {value:270,label:"270°"}]
-            value: root.camera.rotation
-            onChanged: value => editor.setProjectValue("camera.rotation", value)
-        }
-        EditorSwitch {
-            Layout.preferredHeight: 32
-            text: "Flip horizontal"
-            checked: root.camera.flipHorizontal
-            onToggled: editor.setProjectValue("camera.flipHorizontal", checked)
-        }
+        PanelSlider { visible: root.camera.shape !== "round"; Layout.fillWidth: true; label: "Corner radius"; path: "camera.radius"; from: 0; to: 80; value: root.camera.radius; stepSize: 1 }
 
         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.separator }
         PanelHeading { text: "Camera shadow" }
@@ -125,6 +93,55 @@ ColumnLayout {
             }
         }
         PanelSlider { Layout.fillWidth: true; label: "Shrink while zoomed"; path: "camera.scaleDuringZoom"; from: .4; to: 1; value: root.camera.scaleDuringZoom; stepSize: .01; decimals: 2 }
+    }
+    // Orientation and the full-screen look apply to camera clips too, so they stay available
+    // with the bubble switched off.
+    ColumnLayout {
+        visible: editor.hasCamera
+        Layout.fillWidth: true
+        spacing: theme.space.panelGap
+
+        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.separator }
+        PanelHeading { text: "Full screen" }
+        OmButtonGroup {
+            objectName: "cameraFullFrameGroup"
+            Layout.fillWidth: true
+            options: [{value:"fill", label:"Fill frame"}, {value:"square", label:"Square + blur"}]
+            value: root.camera.fullFrame
+            onChanged: value => editor.setProjectValue("camera.fullFrame", value)
+        }
+        Label {
+            Layout.fillWidth: true
+            text: "Clips with the Camera layout show the webcam full screen. Set a clip's layout in Clip."
+            color: theme.textMuted
+            font.pixelSize: theme.font.bodySmall
+            wrapMode: Text.WordWrap
+        }
+
+        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.separator }
+        RowLayout {
+            Layout.fillWidth: true
+            PanelLabel { text: "Rotation"; Layout.fillWidth: true }
+            OmIconButton {
+                enabled: false; opacity: 1; background: null
+                icon.source: "qrc:/omareel/assets/icons/lucide/rotate-cw.svg"
+                icon.color: theme.foreground
+                icon.width: 15; icon.height: 15
+            }
+        }
+        OmButtonGroup {
+            Layout.fillWidth: true
+            options: [{value:0,label:"0°"}, {value:90,label:"90°"},
+                {value:180,label:"180°"}, {value:270,label:"270°"}]
+            value: root.camera.rotation
+            onChanged: value => editor.setProjectValue("camera.rotation", value)
+        }
+        EditorSwitch {
+            Layout.preferredHeight: 32
+            text: "Flip horizontal"
+            checked: root.camera.flipHorizontal
+            onToggled: editor.setProjectValue("camera.flipHorizontal", checked)
+        }
     }
     ColorDialog {
         id: borderColourDialog

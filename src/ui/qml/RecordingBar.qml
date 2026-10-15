@@ -87,13 +87,14 @@ ApplicationWindow {
             }
 
             OmButton {
-                Layout.preferredWidth: 58
+                Layout.preferredWidth: recordingBar.stopping ? 76 : 58
                 Layout.preferredHeight: 28
                 focusPolicy: Qt.NoFocus
                 font.pixelSize: theme.font.bodySmall
                 font.weight: Font.DemiBold
+                enabled: !recordingBar.stopping
                 onClicked: recordingBar.stop()
-                text: "Stop"
+                text: recordingBar.stopping ? "Saving…" : "Stop"
                 tooltipText: ""
                 bordered: true
                 primary: true
@@ -108,6 +109,7 @@ ApplicationWindow {
                 tooltipText: ""
                 focusPolicy: Qt.NoFocus
                 font.pixelSize: theme.font.caption
+                enabled: !recordingBar.stopping
                 property bool armed: false
                 bordered: true
                 destructive: armed
@@ -195,6 +197,11 @@ ApplicationWindow {
                     visible: false
                     layer.enabled: true
                 }
+                Rectangle {
+                    anchors.fill: parent
+                    visible: !recordingBar.cameraReady
+                    color: Qt.alpha(theme.surface, .94)
+                }
                 Item {
                     id: cameraRotated
                     anchors.centerIn: parent
@@ -224,8 +231,9 @@ ApplicationWindow {
             Label {
                 anchors.centerIn: parent
                 width: parent.width - 20
-                visible: recordingBar.cameraError !== ""
-                text: recordingBar.cameraError
+                visible: text !== ""
+                text: recordingBar.cameraError !== "" ? recordingBar.cameraError
+                    : recordingBar.cameraReady ? "" : "Starting camera…"
                 wrapMode: Text.WordWrap
                 horizontalAlignment: Text.AlignHCenter
                 color: theme.foreground

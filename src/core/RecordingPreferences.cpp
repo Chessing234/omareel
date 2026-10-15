@@ -51,6 +51,8 @@ RecordingPreferences RecordingPreferences::load()
         preferences.webcamEnabled = preferences.webcam.value(QStringLiteral("enabled")).toBool(false);
         preferences.webcamDevice = preferences.webcam.value(QStringLiteral("device"))
                                        .toString(QStringLiteral("/dev/video2"));
+        preferences.webcamChosenDevice = preferences.webcam.value(QStringLiteral("chosenDevice"))
+                                             .toString(preferences.webcamDevice);
         preferences.webcamHeight = preferences.webcam.value(QStringLiteral("captureHeight")).toInt(1080);
         if (preferences.webcamHeight != 720) preferences.webcamHeight = 1080;
         const int rotation = preferences.webcam.value(QStringLiteral("rotation")).toInt(0);
@@ -77,6 +79,7 @@ bool RecordingPreferences::save(QString *error) const
     QJsonObject savedWebcam = webcam;
     savedWebcam.insert(QStringLiteral("enabled"), webcamEnabled);
     savedWebcam.insert(QStringLiteral("device"), webcamDevice);
+    savedWebcam.insert(QStringLiteral("chosenDevice"), webcamChosenDevice);
     savedWebcam.insert(QStringLiteral("captureHeight"), webcamHeight == 720 ? 720 : 1080);
     savedWebcam.insert(QStringLiteral("rotation"), webcamRotation);
     savedWebcam.insert(QStringLiteral("flipHorizontal"), webcamFlipHorizontal);

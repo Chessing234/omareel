@@ -43,11 +43,13 @@ class RecordingBar : public QObject
     Q_PROPERTY(bool webcam READ webcam CONSTANT)
     Q_PROPERTY(bool hidden READ hidden NOTIFY captureStartedChanged)
     Q_PROPERTY(bool captureStarted READ captureStarted NOTIFY captureStartedChanged)
+    Q_PROPERTY(bool stopping READ stopping NOTIFY stoppingChanged)
     Q_PROPERTY(bool countdownActive READ countdownActive NOTIFY countdownChanged)
     Q_PROPERTY(int countdownValue READ countdownValue NOTIFY countdownChanged)
     Q_PROPERTY(int cameraRotation READ cameraRotation NOTIFY cameraSettingsChanged)
     Q_PROPERTY(bool cameraFlipHorizontal READ cameraFlipHorizontal NOTIFY cameraSettingsChanged)
     Q_PROPERTY(QString cameraError READ cameraError NOTIFY cameraErrorChanged)
+    Q_PROPERTY(bool cameraReady READ cameraReady NOTIFY cameraReadyChanged)
     Q_PROPERTY(bool selfViewVisible READ selfViewVisible NOTIFY selfViewVisibilityChanged)
     Q_PROPERTY(bool selfViewSafe READ selfViewSafe NOTIFY selfViewVisibilityChanged)
     Q_PROPERTY(QString selfViewMonitor READ selfViewMonitor NOTIFY selfViewPlacementChanged)
@@ -64,11 +66,13 @@ public:
     bool webcam() const { return m_webcam; }
     bool hidden() const { return m_hidden; }
     bool captureStarted() const { return m_captureStarted; }
+    bool stopping() const { return m_stopping; }
     bool countdownActive() const { return m_countdownActive; }
     int countdownValue() const { return m_countdownValue; }
     int cameraRotation() const { return m_cameraRotation; }
     bool cameraFlipHorizontal() const { return m_cameraFlipHorizontal; }
     QString cameraError() const { return m_cameraError; }
+    bool cameraReady() const;
     bool selfViewVisible() const { return m_selfViewVisible; }
     bool selfViewSafe() const { return m_selfViewSafe; }
     QString selfViewMonitor() const { return m_selfViewMonitor; }
@@ -94,9 +98,11 @@ signals:
     void elapsedChanged();
     void cameraSettingsChanged();
     void cameraErrorChanged();
+    void cameraReadyChanged();
     void selfViewVisibilityChanged();
     void selfViewPlacementChanged();
     void captureStartedChanged();
+    void stoppingChanged();
     void countdownChanged();
     void finished();
 
@@ -126,6 +132,8 @@ private:
     bool m_webcam = false;
     bool m_hidden = false;
     bool m_captureStarted = false;
+    // Stop was pressed and the recording is being saved.
+    bool m_stopping = false;
     bool m_countdownActive = false;
     int m_countdownValue = 3;
     int m_cameraRotation = 0;

@@ -2,11 +2,14 @@
 
 #include "core/InputLog.h"
 #include "core/KeystrokeTrack.h"
+#include "core/LayoutTimeline.h"
 #include "core/MotionTrack.h"
 #include "core/Project.h"
+#include "render/MediaProbe.h"
 
 #include <QFutureWatcher>
 #include <QElapsedTimer>
+#include <QHash>
 #include <QJsonObject>
 #include <QMediaPlayer>
 #include <QObject>
@@ -16,6 +19,7 @@
 #include <QSet>
 #include <QVariantList>
 #include <QVariantMap>
+#include <map>
 #include <memory>
 
 class QVideoSink;
@@ -51,6 +55,9 @@ class Editor : public QObject
     Q_PROPERTY(QVariantList cameraThumbnails READ cameraThumbnails NOTIFY cameraThumbnailsChanged)
     Q_PROPERTY(int videoThumbnailRevision READ videoThumbnailRevision NOTIFY videoThumbnailRevisionChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
+    // A video being copied into the bundle by insertMedia().
+    Q_PROPERTY(bool importing READ importing NOTIFY importingChanged)
+    Q_PROPERTY(QString importError READ importError NOTIFY importingChanged)
     Q_PROPERTY(double position READ position NOTIFY positionChanged)
     Q_PROPERTY(double playheadPosition READ playheadPosition NOTIFY playheadPositionChanged)
     Q_PROPERTY(bool playing READ playing NOTIFY playingChanged)
@@ -77,6 +84,8 @@ class Editor : public QObject
     Q_PROPERTY(int outputHeight READ outputHeight NOTIFY outputSizeChanged)
     Q_PROPERTY(double time READ sourcePosition NOTIFY compositionChanged)
     Q_PROPERTY(QVariantMap zoom READ previewZoom NOTIFY compositionChanged)
+    Q_PROPERTY(QVariantMap layout READ previewLayout NOTIFY compositionChanged)
+    Q_PROPERTY(QVariantMap media READ previewMedia NOTIFY compositionChanged)
     Q_PROPERTY(QVariantMap cursor READ previewCursor NOTIFY compositionChanged)
     Q_PROPERTY(QVariantList ripples READ previewRipples NOTIFY compositionChanged)
     Q_PROPERTY(QVariantList keystrokePills READ previewKeystrokePills NOTIFY compositionChanged)
@@ -88,6 +97,12 @@ class Editor : public QObject
     Q_PROPERTY(QString cameraStatus READ cameraStatus CONSTANT)
 
 public:
+    // A video insertMedia() brought into the bundle, or why it could not.
+    struct ImportedInsert {
+        QString path;
+        VideoInfo info;
+        QString error;
+    };
     explicit Editor(const QString &bundlePath, QObject *parent = nullptr);
     ~Editor() override;
 
@@ -111,6 +126,8 @@ public:
     QVariantList cameraThumbnails() const { return m_cameraThumbnails; }
     int videoThumbnailRevision() const { return m_videoThumbnailRevision; }
     bool loading() const { return m_loading; }
+    bool importing() const { return m_importing; }
+    QString importError() const { return m_importError; }
     double position() const { return m_outputPosition; }
     double playheadPosition() const { return m_playheadPosition; }
     bool playing() const;
@@ -135,6 +152,8 @@ public:
     int outputHeight() const;
     double sourcePosition() const;
     QVariantMap previewZoom() const;
+    QVariantMap previewLayout() const;
+    QVariantMap previewMedia() const;
     QVariantMap previewCursor() const;
     QVariantList previewRipples() const;
     QVariantList previewKeystrokePills() const;
@@ -151,6 +170,7 @@ public:
 
     Q_INVOKABLE void attachVideoOutput(QObject *output);
     Q_INVOKABLE void attachCameraVideoOutput(QObject *output);
+    Q_INVOKABLE void attachMediaVideoOutput(QObject *output);
     Q_INVOKABLE void setProjectValue(const QString &path, const QVariant &value, bool coalesce = false);
     Q_INVOKABLE void applyGradientPreset(int index);
     Q_INVOKABLE void beginCoalescedEdit(const QString &key);
@@ -162,6 +182,10 @@ public:
     QMediaPlayer::PlaybackState playerPlaybackStateForTests() const { return m_player.playbackState(); }
     QMediaPlayer::MediaStatus playerMediaStatusForTests() const { return m_player.mediaStatus(); }
     qint64 playerPositionMsForTests() const { return m_player.position(); }
+    QMediaPlayer::PlaybackState cameraPlaybackStateForTests() const { return m_cameraPlayer.playbackState(); }
+    qint64 cameraPositionMsForTests() const { return m_cameraPlayer.position(); }
+    bool screenFrameTimesReadyForTests() const { return !m_screenFrameTimes.isEmpty(); }
+    QMediaPlayer::PlaybackState mediaPlaybackStateForTests() const { return m_mediaPlayer.playbackState(); }
     Q_INVOKABLE void playPause();
     Q_INVOKABLE void play();
     Q_INVOKABLE void pause();
@@ -170,6 +194,9 @@ public:
     Q_INVOKABLE QString videoThumbnailUrl(double sourceTime);
     Q_INVOKABLE QString videoThumbnailUrlForClip(double sourceTime, double sourceStart,
                                                 double sourceEnd);
+    // Filmstrip frame for a clip at a source time: camera clips show the webcam.
+    Q_INVOKABLE QString clipThumbnailUrl(const QString &clipId, double sourceTime,
+                                         double sourceStart, double sourceEnd);
     Q_INVOKABLE void seek(double outputTime);
     Q_INVOKABLE void beginScrub();
     Q_INVOKABLE void scrubTo(double outputTime);
@@ -188,6 +215,14 @@ public:
     Q_INVOKABLE bool mergeClip(const QString &id, int direction);
     Q_INVOKABLE bool resetClipTrims(const QString &id);
     Q_INVOKABLE bool setClipSpeed(const QString &id, double speed);
+    Q_INVOKABLE bool setClipLayout(const QString &id, const QString &layout);
+    Q_INVOKABLE bool setClipFit(const QString &id, const QString &fit);
+    // Moves an inserted clip one place earlier (-1) or later (+1) on the timeline.
+    Q_INVOKABLE bool reorderClip(const QString &id, int direction);
+    // Copies a video into the bundle's media/ directory, then inserts it at the playhead,
+    // splitting the clip there.
+    Q_INVOKABLE void insertMedia(const QUrl &url);
+    Q_INVOKABLE void clearImportError();
     Q_INVOKABLE QString addZoomAt(double outputTime, double length = 2.0);
     Q_INVOKABLE bool moveZoom(const QString &id, double sourceStart);
     Q_INVOKABLE bool resizeZoom(const QString &id, double sourceStart, double sourceEnd);
@@ -228,6 +263,7 @@ signals:
     void wallpapersChanged();
     void cameraThumbnailsChanged();
     void loadingChanged();
+    void importingChanged();
     void outputSizeChanged();
     void compositionChanged();
     void exportProgressChanged();
@@ -238,6 +274,17 @@ signals:
     void errorOccurred(const QString &message);
 
 private:
+    // A video the filmstrip samples frames from, with its own cache directory.
+    struct ThumbnailSource {
+        QString videoPath;
+        QString cacheDirectory;
+        QString filter;
+        double duration = 0.0;
+        double fps = 60.0;
+        QSet<int> pending;
+        QSet<int> failed;
+        QSet<int> ready;
+    };
     bool loadBundle();
     void snapshot(const QString &coalesceKey = {});
     void changed(bool motion = true);
@@ -253,10 +300,30 @@ private:
     void flushScrubSeek();
     void handlePlayerPosition(qint64 milliseconds);
     void updatePlayheadPosition();
+    double nextScreenFrameTime(double sourceTime) const;
     void resetPlayheadClock(double outputTime);
     void setPlayheadPosition(double outputTime);
     double clampPlaybackPosition(double outputTime) const;
     void startNextVideoThumbnail();
+    ThumbnailSource *thumbnailSource(const QString &key);
+    QString thumbnailUrl(const QString &key, double time, double start, double end);
+    QString cameraThumbnailKey() const;
+    LayoutSample layoutAt(double outputTime) const;
+    bool clipIsMedia(int index) const;
+    // How far a clip's in and out may move: between its recording neighbours, or within the
+    // inserted video.
+    QPair<double, double> clipBounds(int index);
+    VideoInfo insertInfo(const QString &path);
+    QMediaPlayer &playerFor(int clipIndex);
+    void setTransportPlaying(bool value);
+    // Shows the frame at milliseconds. A player that is not about to play decodes that frame
+    // briefly and pauses on it (warming).
+    void seekPlayer(QMediaPlayer &player, qint64 milliseconds, bool willPlay);
+    void loadInsert(const QString &path);
+    void prepareNextClip();
+    void advanceClip();
+    void updateInsertAudio();
+    void finishImport();
     void handlePreviewStats();
     void syncCamera(double screenSourceTime, bool force = false);
     void startCameraThumbnailBuild();
@@ -289,13 +356,34 @@ private:
     QString m_error;
     QMediaPlayer m_player;
     QMediaPlayer m_cameraPlayer;
+    // Plays inserted clips; holds one file at a time.
+    QMediaPlayer m_mediaPlayer;
     std::unique_ptr<QAudioOutput> m_audioOutput;
+    std::unique_ptr<QAudioOutput> m_mediaAudioOutput;
+    QPointer<QVideoSink> m_mediaVideoSink;
+    QString m_mediaPlayerSource;
+    qint64 m_pendingMediaSeekMs = -1;
+    bool m_pendingMediaWillPlay = false;
+    qint64 m_mediaWarmTargetMs = 0;
+    bool m_warmingMediaPreview = false;
+    // The media sink shows a frame of the file now loaded.
+    bool m_mediaFrameReady = false;
+    // What Space controls: the players follow it as clips change hands.
+    bool m_transportPlaying = false;
+    QHash<QString, VideoInfo> m_inserts;
+    bool m_importing = false;
+    QString m_importError;
+    QFutureWatcher<ImportedInsert> m_importWatcher;
     QPointer<QVideoSink> m_videoSink;
     QPointer<QVideoSink> m_cameraVideoSink;
     double m_outputPosition = 0.0;
     double m_playheadPosition = 0.0;
     double m_playheadClockPosition = 0.0;
     QElapsedTimer m_playheadClock;
+    // The screen recording's frame times. A native capture holds each frame until the screen
+    // changes, and the player's position stands still on it until the next one.
+    QList<double> m_screenFrameTimes;
+    QFutureWatcher<QList<double>> m_screenFrameTimesWatcher;
     double m_playbackRangeStart = -1.0;
     double m_playbackRangeEnd = -1.0;
     int m_activeClip = 0;
@@ -328,12 +416,10 @@ private:
     std::shared_ptr<const MotionTrack> m_motion;
     QVariantList m_cameraThumbnails;
     QFutureWatcher<QVariantList> m_cameraThumbnailWatcher;
-    QString m_videoThumbnailCacheDirectory;
+    // A node-based map keeps the pointers thumbnailSource() hands out valid across inserts.
+    std::map<QString, ThumbnailSource> m_thumbnailSources;
     int m_videoThumbnailRevision = 0;
-    QList<int> m_videoThumbnailQueue;
-    QSet<int> m_videoThumbnailPending;
-    QSet<int> m_videoThumbnailFailed;
-    QSet<int> m_videoThumbnailReady;
+    QList<QPair<QString, int>> m_videoThumbnailQueue;
     QFutureWatcher<bool> m_videoThumbnailWatcher;
     bool m_loading = true;
     QVariantList m_gradients;
