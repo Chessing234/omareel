@@ -1093,7 +1093,7 @@ private slots:
             CameraOverlay {
                 settings: ({
                     enabled: true, position: "bottom-right", size: .25,
-                    shape: "rounded", radius: 16, crop: "original",
+                    shape: "rectangle", radius: 16,
                     rotation: 90, flipHorizontal: true, scaleDuringZoom: .7,
                     offset: {x: .02, y: .02},
                     shadow: {enabled: false, intensity: .55, blur: 18, distance: 18},
@@ -1400,7 +1400,7 @@ private slots:
                 CameraOverlay {
                     settings: ({
                         enabled: true, position: "bottom-right", size: .25,
-                        shape: "round", radius: 16, crop: "original",
+                        shape: "round", radius: 16,
                         rotation: 0, flipHorizontal: false, scaleDuringZoom: .7,
                         offset: {x: .02, y: .02}, fullFrame: "%1",
                         shadow: {enabled: false, intensity: .55, blur: 18, distance: 18},

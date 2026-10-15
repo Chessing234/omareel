@@ -90,9 +90,10 @@ struct Camera {
     bool enabled = false;
     QString position = QStringLiteral("bottom-right");
     double size = 0.25;
+    // round, square, or rectangle (the webcam's own aspect). radius rounds the corners of a
+    // square or rectangle, in pixels at 1080p.
     QString shape = QStringLiteral("round");
     double radius = 16.0;
-    QString crop = QStringLiteral("original");
     bool flipHorizontal = false;
     int rotation = 0;
     Shadow shadow{false, 0.55, 18.0, 18.0, 90.0};
@@ -115,7 +116,7 @@ struct ExportSettings {
 class Project
 {
 public:
-    static constexpr int CurrentDefaultsVersion = 2;
+    static constexpr int CurrentDefaultsVersion = 3;
     static Project defaults(const QString &name = QStringLiteral("Untitled Recording"),
                             double duration = 0.0);
     static QJsonObject migrateDefaults(const QJsonObject &json, bool *changed = nullptr);

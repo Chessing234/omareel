@@ -162,11 +162,17 @@ monotonic clock and copy-muxed with the video at stop.
              "clickShrink":0.85,"hideWhenIdleMs":null,"style":"macos"},
   "audio": {"desktop":true,"mic":true,"volume":1.0},
   "camera": {"enabled":false,"position":"bottom-right","size":0.25,
-             "shape":"round","radius":16,"crop":"original","flipHorizontal":false,"rotation":0,
+             "shape":"round",       // round | square | rectangle (the webcam's own aspect)
+             "radius":16,           // corners of square and rectangle, px at 1080p reference
+             "flipHorizontal":false,"rotation":0,
              "shadow":true,"scaleDuringZoom":0.7,"offset":{"x":0.02,"y":0.02}},
   "export": {"format":"mp4","fps":60,"width":1920,"quality":"high","gif":{"fps":20,"width":960}}
 }
 ```
+
+Projects before `defaultsVersion` 3 kept the camera's `crop` (square | original) apart from a
+`round | rounded | square` shape whose only difference was the corners; loading folds the crop into
+`shape` and turns the old sharp `square` into a radius of 0.
 
 Output size: derived from `aspect` + `export.width`; height = width / aspect (round to even).
 For `auto`, aspect = cropped source aspect.

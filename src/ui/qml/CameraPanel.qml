@@ -64,20 +64,12 @@ ColumnLayout {
         PanelLabel { text: "Shape" }
         OmButtonGroup {
             Layout.fillWidth: true
-            options: [{value:"round", label:"Round"}, {value:"rounded", label:"Rounded"}, {value:"square", label:"Square"}]
+            objectName: "cameraShapeGroup"
+            options: [{value:"round", label:"Round"}, {value:"square", label:"Square"}, {value:"rectangle", label:"Rectangle"}]
             value: root.camera.shape
             onChanged: value => editor.setProjectValue("camera.shape", value)
         }
-        PanelSlider { visible: root.camera.shape === "rounded"; Layout.fillWidth: true; label: "Corner radius"; path: "camera.radius"; from: 0; to: 80; value: root.camera.radius; stepSize: 1 }
-
-        PanelLabel { text: "Crop" }
-        OmButtonGroup {
-            Layout.fillWidth: true
-            options: [{value:"square", label:"Square"},
-                {value:"original", label:"Original", enabled: root.camera.shape !== "round"}]
-            value: root.camera.shape === "round" ? "square" : root.camera.crop
-            onChanged: value => editor.setProjectValue("camera.crop", value)
-        }
+        PanelSlider { visible: root.camera.shape !== "round"; Layout.fillWidth: true; label: "Corner radius"; path: "camera.radius"; from: 0; to: 80; value: root.camera.radius; stepSize: 1 }
 
         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.separator }
         PanelHeading { text: "Camera shadow" }

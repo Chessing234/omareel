@@ -21,7 +21,7 @@ Item {
     readonly property string fullMode: settings.fullFrame === "square" ? "square" : "fill"
     readonly property real sourceBorderWidth: settings.border.enabled ? settings.border.width * ref : 0
     readonly property real borderWidth: sourceBorderWidth * (1 - fullProgress)
-    readonly property bool squareCrop: settings.shape === "round" || settings.crop === "square"
+    readonly property bool squareCrop: settings.shape !== "rectangle"
     readonly property bool quarterTurn: settings.rotation === 90 || settings.rotation === 270
     readonly property real sourceAspect: sourceWidth / Math.max(1, sourceHeight)
     readonly property real aspect: squareCrop ? 1 : (quarterTurn ? 1 / sourceAspect : sourceAspect)
@@ -35,7 +35,7 @@ Item {
     readonly property real bubbleY: settings.position.indexOf("top") >= 0
         ? outputHeight * settings.offset.y : outputHeight * (1 - settings.offset.y) - bubbleHeight
     readonly property real bubbleRadius: settings.shape === "round" ? Math.min(bubbleWidth, bubbleHeight) / 2
-        : settings.shape === "rounded" ? settings.radius * ref : 0
+        : settings.radius * ref
     // Fill covers the whole canvas; square keeps the largest centred square over a blurred copy.
     readonly property real fullSide: Math.min(outputWidth, outputHeight)
     readonly property real fullWidth: fullMode === "square" ? fullSide : outputWidth

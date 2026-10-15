@@ -75,7 +75,7 @@ QJsonObject Project::migrateDefaults(const QJsonObject &json, bool *changed)
     QJsonObject migrated = json;
     const int storedVersion = json.value(QStringLiteral("defaultsVersion")).toInt(0);
     bool didChange = storedVersion < CurrentDefaultsVersion;
-    if (storedVersion < CurrentDefaultsVersion) {
+    if (storedVersion < 2) {
         QJsonObject frame = migrated.value(QStringLiteral("frame")).toObject();
         const QJsonObject shadow = frame.value(QStringLiteral("shadow")).toObject();
         const double intensity = shadow.value(QStringLiteral("intensity"))
@@ -117,8 +117,22 @@ QJsonObject Project::migrateDefaults(const QJsonObject &json, bool *changed)
                 {QStringLiteral("alpha"), defaults.alpha}});
         }
         migrated.insert(QStringLiteral("frame"), frame);
-        migrated.insert(QStringLiteral("defaultsVersion"), CurrentDefaultsVersion);
     }
+    // Version 3 folds the camera's crop (square or original) into its shape. The old "rounded"
+    // and "square" shapes differed only in corners, so a sharp square is now a radius of 0.
+    if (storedVersion < 3 && migrated.value(QStringLiteral("camera")).isObject()) {
+        QJsonObject camera = migrated.value(QStringLiteral("camera")).toObject();
+        const QString shape = camera.value(QStringLiteral("shape")).toString(QStringLiteral("round"));
+        if (shape == QLatin1String("rounded") || shape == QLatin1String("square")) {
+            if (shape == QLatin1String("square")) camera.insert(QStringLiteral("radius"), 0);
+            camera.insert(QStringLiteral("shape"),
+                camera.value(QStringLiteral("crop")).toString() == QLatin1String("square")
+                    ? QStringLiteral("square") : QStringLiteral("rectangle"));
+        }
+        camera.remove(QStringLiteral("crop"));
+        migrated.insert(QStringLiteral("camera"), camera);
+    }
+    if (didChange) migrated.insert(QStringLiteral("defaultsVersion"), CurrentDefaultsVersion);
     if (changed) *changed = didChange;
     return migrated;
 }
@@ -247,13 +261,10 @@ Project Project::fromJson(const QJsonObject &root)
     p.camera.position = camera.value("position").toString("bottom-right");
     p.camera.size = camera.value("size").toDouble(0.25);
     const QString cameraShape = camera.value("shape").toString("round");
-    if (cameraShape == QLatin1String("round") || cameraShape == QLatin1String("rounded")
-        || cameraShape == QLatin1String("square"))
+    if (cameraShape == QLatin1String("round") || cameraShape == QLatin1String("square")
+        || cameraShape == QLatin1String("rectangle"))
         p.camera.shape = cameraShape;
     p.camera.radius = camera.value("radius").toDouble(16.0);
-    const QString cameraCrop = camera.value("crop").toString("original");
-    if (cameraCrop == QLatin1String("square") || cameraCrop == QLatin1String("original"))
-        p.camera.crop = cameraCrop;
     p.camera.flipHorizontal = camera.contains("flipHorizontal")
         ? camera.value("flipHorizontal").toBool(false)
         : camera.value("mirror").toBool(false);
@@ -346,7 +357,7 @@ QJsonObject Project::toJson() const
         {"audio", QJsonObject{{"desktop", audio.desktop}, {"mic", audio.mic}, {"volume", audio.volume}}},
         {"camera", QJsonObject{{"enabled", camera.enabled}, {"position", camera.position},
             {"size", camera.size}, {"shape", camera.shape}, {"radius", camera.radius},
-            {"crop", camera.crop}, {"flipHorizontal", camera.flipHorizontal},
+            {"flipHorizontal", camera.flipHorizontal},
             {"rotation", camera.rotation},
             {"shadow", QJsonObject{{"enabled", camera.shadow.enabled},
                 {"intensity", camera.shadow.intensity}, {"blur", camera.shadow.blur},

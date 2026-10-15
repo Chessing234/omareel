@@ -17,7 +17,7 @@ private slots:
         const Project original = Project::defaults(QStringLiteral("Demo"), 12.5);
         const auto json = original.toJson();
         QCOMPARE(json.value("version").toInt(), 1);
-        QCOMPARE(json.value("defaultsVersion").toInt(), 2);
+        QCOMPARE(json.value("defaultsVersion").toInt(), Project::CurrentDefaultsVersion);
         QVERIFY(json.value("aspect").isNull());
         QCOMPARE(json.value("clips").toArray().first().toObject().value("out").toDouble(), 12.5);
         QCOMPARE(original.frame.padding, 0.10);
@@ -47,7 +47,6 @@ private slots:
         QCOMPARE(original.camera.size, 0.25);
         QCOMPARE(original.camera.shape, QStringLiteral("round"));
         QCOMPARE(original.camera.radius, 16.0);
-        QCOMPARE(original.camera.crop, QStringLiteral("original"));
         QCOMPARE(original.camera.flipHorizontal, false);
         QCOMPARE(original.camera.rotation, 0);
         QCOMPARE(original.camera.shadow.enabled, false);
@@ -199,7 +198,7 @@ private slots:
                 {QStringLiteral("enabled"), false}, {QStringLiteral("width"), 0.0},
                 {QStringLiteral("color"), QStringLiteral("#000000")},
                 {QStringLiteral("alpha"), 0.5}}}});
-        QCOMPARE(untouched.defaultsVersion, 2);
+        QCOMPARE(untouched.defaultsVersion, Project::CurrentDefaultsVersion);
         QCOMPARE(untouched.frame.shadow.intensity, 0.25);
         QCOMPARE(untouched.frame.shadow.blur, 40.0);
         QCOMPARE(untouched.frame.shadow.distance, 10.0);
@@ -214,7 +213,7 @@ private slots:
                 {QStringLiteral("enabled"), true}, {QStringLiteral("width"), 3.0},
                 {QStringLiteral("color"), QStringLiteral("#123456")},
                 {QStringLiteral("alpha"), 0.5}}}});
-        QCOMPARE(customised.defaultsVersion, 2);
+        QCOMPARE(customised.defaultsVersion, Project::CurrentDefaultsVersion);
         QCOMPARE(customised.frame.shadow.intensity, 0.61);
         QCOMPARE(customised.frame.shadow.blur, 20.0);
         QCOMPARE(customised.frame.shadow.distance, 25.0);
@@ -232,7 +231,7 @@ private slots:
                 {QStringLiteral("enabled"), true}, {QStringLiteral("width"), 0.0},
                 {QStringLiteral("color"), QStringLiteral("#000000")},
                 {QStringLiteral("alpha"), 0.5}}}});
-        QCOMPARE(toggled.defaultsVersion, 2);
+        QCOMPARE(toggled.defaultsVersion, Project::CurrentDefaultsVersion);
         QVERIFY(!toggled.frame.shadow.enabled);
         QCOMPARE(toggled.frame.shadow.intensity, 0.75);
         QCOMPARE(toggled.frame.shadow.blur, 20.0);
@@ -240,6 +239,43 @@ private slots:
         QVERIFY(toggled.frame.border.enabled);
         QCOMPARE(toggled.frame.border.width, 0.0);
         QCOMPARE(toggled.frame.border.alpha, 0.5);
+    }
+
+    void cameraCropFoldsIntoShape_data()
+    {
+        QTest::addColumn<int>("defaultsVersion");
+        QTest::addColumn<QString>("shape");
+        QTest::addColumn<QString>("crop");
+        QTest::addColumn<QString>("expectedShape");
+        QTest::addColumn<double>("expectedRadius");
+
+        QTest::newRow("round") << 2 << "round" << "original" << "round" << 12.0;
+        QTest::newRow("rounded square") << 2 << "rounded" << "square" << "square" << 12.0;
+        QTest::newRow("rounded original") << 2 << "rounded" << "original" << "rectangle" << 12.0;
+        QTest::newRow("sharp square") << 2 << "square" << "square" << "square" << 0.0;
+        QTest::newRow("sharp original") << 2 << "square" << "original" << "rectangle" << 0.0;
+        QTest::newRow("no defaults version") << 0 << "rounded" << "original" << "rectangle" << 12.0;
+        QTest::newRow("current square keeps its corners") << 3 << "square" << "" << "square" << 12.0;
+        QTest::newRow("current rectangle") << 3 << "rectangle" << "" << "rectangle" << 12.0;
+    }
+
+    void cameraCropFoldsIntoShape()
+    {
+        QFETCH(int, defaultsVersion);
+        QFETCH(QString, shape);
+        QFETCH(QString, crop);
+        QFETCH(QString, expectedShape);
+        QFETCH(double, expectedRadius);
+        QJsonObject camera{{QStringLiteral("shape"), shape}, {QStringLiteral("radius"), 12.0}};
+        if (!crop.isEmpty()) camera.insert(QStringLiteral("crop"), crop);
+        QJsonObject root{{QStringLiteral("camera"), camera}};
+        if (defaultsVersion > 0) root.insert(QStringLiteral("defaultsVersion"), defaultsVersion);
+        const Project loaded = Project::fromJson(root);
+        QCOMPARE(loaded.camera.shape, expectedShape);
+        QCOMPARE(loaded.camera.radius, expectedRadius);
+        const QJsonObject saved = loaded.toJson().value(QStringLiteral("camera")).toObject();
+        QVERIFY(!saved.contains(QStringLiteral("crop")));
+        QCOMPARE(Project::fromJson(loaded.toJson()).camera.shape, expectedShape);
     }
 };
 
