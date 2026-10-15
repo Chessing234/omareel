@@ -345,6 +345,11 @@ bool Editor::loadBundle()
             m_project.camera.rotation = rotation;
         m_project.camera.flipHorizontal = cameraCapture
             .value(QStringLiteral("flipHorizontal")).toBool(false);
+        const QString shape = cameraCapture.value(QStringLiteral("shape")).toString(QStringLiteral("round"));
+        if (shape == QLatin1String("round") || shape == QLatin1String("rounded")
+                || shape == QLatin1String("square"))
+            m_project.camera.shape = shape;
+        m_project.camera.radius = cameraCapture.value(QStringLiteral("radius")).toDouble(16.0);
     }
     if (m_project.clips.isEmpty()) m_project.clips = {Clip{QStringLiteral("c1"), 0.0, m_sourceDuration, 1.0}};
     m_project.audio.desktop = m_project.audio.desktop && m_hasDesktopAudio;

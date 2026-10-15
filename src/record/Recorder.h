@@ -59,7 +59,9 @@ public:
     static QJsonObject cameraCaptureBlock(const QString &device, int requestedHeight,
                                           int width, int height, double fps,
                                           qint64 firstFrameUs, const QString &backend,
-                                          int rotation, bool flipHorizontal);
+                                          int rotation, bool flipHorizontal,
+                                          const QString &shape = QStringLiteral("round"),
+                                          double radius = 16);
     static bool discardTimeline(const DiscardActions &actions);
     static int startDetached(const RecordOptions &options, QString *message);
     static int stopExisting(bool cancel, QString *bundlePath, QString *error);
