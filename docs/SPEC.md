@@ -49,7 +49,7 @@ omareel record [opts]         # toggle: start if not recording, else stop
     --region                    # slurp pick (default: omarchy-capture-region smart if available, else slurp)
     --window                    # slurp with window rects (hyprctl clients) snapping
     --with-desktop-audio --with-microphone-audio
-    --with-webcam [--webcam-device=/dev/videoN] --no-webcam
+    --with-webcam [--webcam-device=PATH] --no-webcam   # /dev/videoN or a /dev/v4l link
     --fps N (default 60)  --dir PATH (default $XDG_VIDEOS_DIR/omareel)
     --no-open                   # don't launch editor after stop
     --stop                      # only stop; exit 1 if not recording
@@ -63,9 +63,14 @@ are copied from the legacy config directory, and legacy bundle directories remai
 
 `record` is designed to be bound to a Hyprland key (toggle semantics, like
 `omarchy-capture-screenrecording`). Recording state file: `$XDG_RUNTIME_DIR/omareel/recording.json`
-(pid, bundle path, started_us). On stop: SIGINT gsr, wait ≤5 s, finalize, write bundle,
+(pid, bundle path, started_us). On stop: set `stopping` in the state file (the bar and launcher
+show "Saving…"), SIGINT gsr, wait ≤5 s, finalize, write bundle,
 notify via `omarchy-notification-send "Recording saved" --exec omareel edit <bundle>` when
-available, and (unless `--no-open`) spawn `omareel edit <bundle>` detached.
+available, and (unless `--no-open`) spawn `omareel edit <bundle>` detached. The notification
+instead says the recording was saved without audio when none could be muxed, or with a silent
+microphone when ffmpeg's `volumedetect` saw only zero samples from it (a real microphone always
+picks up some noise). A microphone missing from `pactl list short sources` at start is replaced
+by the default one, and the start notification says so.
 Also call `omarchy-shell -q omarchy.indicators refresh` if present (it watches gsr pid).
 
 ## 2. Bundle format (`Name.omareel/` directory)
@@ -102,7 +107,11 @@ as a hidden capture host for `--no-bar`; this keeps camera ownership in an exist
 without turning the recording daemon into a GUI application. The first frame admitted for recording records the
 monotonic timestamp in `camera.mp4.ts`. Some cameras take seconds to start streaming, so the bubble
 says "Starting camera…" until the first frame; if none arrives within ten seconds, the bar releases
-the device and the recording continues without the camera. `capture.json.camera.backend` records
+the device and the recording continues without the camera. Settings name the camera by its
+`/dev/v4l/by-id` link, or its `by-path` link when another node shares the by-id name (a laptop
+webcam's IR sensor has the same USB serial), because `/dev/videoN` numbers follow enumeration
+order and change when a dock reconnects. `webcam.chosenDevice` keeps the camera last picked in
+the launcher while `webcam.device` names the one in use. `capture.json.camera.backend` records
 `ffmpeg-pipe`, along with the device, dimensions, frame rate, first-frame
 timestamp, rotation, and horizontal flip. Rotation and flip affect previews and rendering but are
 not baked into `camera.mp4`.

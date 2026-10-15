@@ -38,7 +38,8 @@ one mode may be supplied.
   both default on).
 - `--with-desktop-audio` records only system output unless the microphone flag is also present.
 - `--with-microphone-audio` records only the saved microphone device unless the system flag is
-  also present.
+  also present. If that microphone isn't plugged in, the default one records instead and the
+  start notification says so.
 - `--no-audio` records no audio and overrides the saved preferences.
 - `--fps N` sets capture rate from 1 through 240; the default is 60.
 - `--webcam-height 720|1080` sets webcam capture resolution; the saved launcher preference
@@ -54,13 +55,15 @@ one mode may be supplied.
 The shell's live REC indicator recognizes the fallback capture process. Omareel refreshes the
 indicator on both start and stop and always maintains its own recording state. On installations
 where the indicator only checks that process name, it may remain off during in-process capture.
-A stop that cannot finalize sends a critical notification.
+A stop that cannot finalize sends a critical notification. The "Recording saved" notification
+says so when the recording has no audio, or when the microphone recorded only digital silence
+(it is muted, or the audio server stopped delivering it).
 
 ## Stopping a recording
 
 An active recording can be stopped in any of these ways:
 
-- Click **Stop** on the recording bar.
+- Click **Stop** on the recording bar. It reads **Saving…** until the recording is finalized.
 - Click the REC indicator in the Omarchy bar.
 - Run `omareel record` or `omareel record --stop` again; the toggle form is intended for
   keybinds.
@@ -75,6 +78,11 @@ The launcher opens at 380×460 and grows to 380×520 while its floating self-vie
 Wayland app id is `omareel`. It needs no window rule: a toplevel whose minimum and maximum width
 match is one Hyprland floats on its own, so the launcher's fixed width keeps it floating and
 centred while its height follows the self-view controls.
+
+While the microphone is on, its row shows a level meter, so a muted microphone or a stuck audio
+server shows up before recording rather than as a silent video. The microphone and webcam menus
+follow devices as they are plugged in and pulled out. An unplugged device stays chosen and is
+used again once it is back; meanwhile the default microphone or the first camera stands in.
 
 ## Camera self-view
 

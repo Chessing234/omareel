@@ -87,13 +87,14 @@ ApplicationWindow {
             }
 
             OmButton {
-                Layout.preferredWidth: 58
+                Layout.preferredWidth: recordingBar.stopping ? 76 : 58
                 Layout.preferredHeight: 28
                 focusPolicy: Qt.NoFocus
                 font.pixelSize: theme.font.bodySmall
                 font.weight: Font.DemiBold
+                enabled: !recordingBar.stopping
                 onClicked: recordingBar.stop()
-                text: "Stop"
+                text: recordingBar.stopping ? "Saving…" : "Stop"
                 tooltipText: ""
                 bordered: true
                 primary: true
@@ -108,6 +109,7 @@ ApplicationWindow {
                 tooltipText: ""
                 focusPolicy: Qt.NoFocus
                 font.pixelSize: theme.font.caption
+                enabled: !recordingBar.stopping
                 property bool armed: false
                 bordered: true
                 destructive: armed

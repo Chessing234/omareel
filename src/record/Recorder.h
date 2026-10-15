@@ -4,6 +4,7 @@
 
 #include <QJsonObject>
 #include <QString>
+#include <QStringList>
 #include <functional>
 
 class QProcess;
@@ -67,6 +68,12 @@ public:
                                    const QString &audioPath, const QString &outputPath,
                                    qint64 screenStartedUs, qint64 audioStartedUs,
                                    qint64 screenDurationUs);
+    // Whether the chosen microphone is missing from the audio server's sources, so the default
+    // one has to stand in. An empty list (pactl failed) says nothing either way.
+    static bool microphoneMissing(const QString &device, const QStringList &sources);
+    // The loudest microphone sample ffmpeg's volumedetect logged as it exited, in dBFS:
+    // -infinity when no sound arrived at all, NaN when the log has no report.
+    static double microphonePeakDb(const QString &ffmpegLog);
     static int startDetached(const RecordOptions &options, QString *message);
     static int stopExisting(bool cancel, QString *bundlePath, QString *error);
     static int daemonMain(const QStringList &arguments);

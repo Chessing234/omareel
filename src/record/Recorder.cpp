@@ -20,6 +20,7 @@
 #include <QStandardPaths>
 #include <QTextStream>
 #include <QThread>
+#include <QtNumeric>
 #include <QVector>
 #include <algorithm>
 #include <atomic>
@@ -28,6 +29,7 @@
 #include <cerrno>
 #include <cstring>
 #include <future>
+#include <limits>
 #include <unistd.h>
 
 using namespace Omareel;
@@ -487,30 +489,40 @@ static bool startAudioCapture(QProcess *process, const RecordOptions &options,
         const QString sink = commandOutput(QStringLiteral("pactl"), {QStringLiteral("get-default-sink")});
         if (!sink.isEmpty()) sources << sink + QStringLiteral(".monitor");
     }
+    bool microphone = false;
     if (options.microphoneAudio) {
         QString source = options.microphoneDevice;
         if (source == QLatin1String("default_input"))
             source = commandOutput(QStringLiteral("pactl"), {QStringLiteral("get-default-source")});
-        if (!source.isEmpty()) sources << source;
+        if (!source.isEmpty()) {
+            sources << source;
+            microphone = true;
+        }
     }
     if (sources.isEmpty()) return false;
-    QStringList arguments{QStringLiteral("-y"), QStringLiteral("-loglevel"), QStringLiteral("error")};
+    // volumedetect logs the microphone's loudest sample when ffmpeg exits, at info level, so a
+    // muted or dead microphone can be told from a quiet one. Nothing reads ffmpeg's output while
+    // it records, so the log goes to a file rather than piling up in memory.
+    QStringList arguments{QStringLiteral("-y"), QStringLiteral("-hide_banner"), QStringLiteral("-nostats"),
+                          QStringLiteral("-loglevel"), QStringLiteral("info")};
     for (const QString &source : std::as_const(sources))
         arguments << QStringLiteral("-thread_queue_size") << QStringLiteral("1024")
                   << QStringLiteral("-f") << QStringLiteral("pulse")
                   << QStringLiteral("-i") << source;
     if (sources.size() > 1)
         arguments << QStringLiteral("-filter_complex")
-                  << QStringLiteral("[0:a][1:a]amix=inputs=2:duration=longest[a]")
+                  << QStringLiteral("[1:a]volumedetect[m];[0:a][m]amix=inputs=2:duration=longest[a]")
                   << QStringLiteral("-map") << QStringLiteral("[a]");
     else
         arguments << QStringLiteral("-map") << QStringLiteral("0:a");
+    if (sources.size() == 1 && microphone) arguments << QStringLiteral("-af") << QStringLiteral("volumedetect");
     // Matroska flushed half a second at a time stays readable if ffmpeg has to be killed.
     arguments << QStringLiteral("-c:a") << QStringLiteral("aac")
               << QStringLiteral("-b:a") << QStringLiteral("192k")
               << QStringLiteral("-flush_packets") << QStringLiteral("1")
               << QStringLiteral("-cluster_time_limit") << QStringLiteral("500") << path;
     process->setProcessChannelMode(QProcess::MergedChannels);
+    process->setStandardOutputFile(path + QStringLiteral(".log"));
     *startedUs = CursorSampler::monotonicUs();
     process->start(QStringLiteral("ffmpeg"), arguments);
     return process->waitForStarted(5000) && writeStartTimestamp(path + QStringLiteral(".ts"), *startedUs);
@@ -547,6 +559,32 @@ bool Recorder::finishAudioCapture(QProcess *process, const QString &screenPath,
         QStringLiteral("1:a:0"), QStringLiteral("-c"), QStringLiteral("copy")}
         + length + QStringList{QStringLiteral("-movflags"), QStringLiteral("+faststart"), outputPath});
     return mux.waitForFinished(30000) && mux.exitCode() == 0 && QFileInfo(outputPath).size() > 0;
+}
+
+bool Recorder::microphoneMissing(const QString &device, const QStringList &sources)
+{
+    return device != QLatin1String("default_input") && !sources.isEmpty() && !sources.contains(device);
+}
+
+double Recorder::microphonePeakDb(const QString &ffmpegLog)
+{
+    // ffmpeg configures the filter graph twice, and the first volumedetect reports no samples as
+    // it is torn down; the report that counts is the last one.
+    double peak = qQNaN();
+    const QStringList lines = ffmpegLog.split(QLatin1Char('\n'));
+    for (const QString &line : lines) {
+        if (!line.contains(QLatin1String("Parsed_volumedetect"))) continue;
+        const QString value = line.section(QLatin1String("] "), 1);
+        if (value.startsWith(QLatin1String("n_samples:")))
+            peak = value.section(QLatin1Char(' '), 1, 1).toLongLong() == 0
+                ? -std::numeric_limits<double>::infinity() : qQNaN();
+        else if (value.startsWith(QLatin1String("max_volume:"))) {
+            bool ok = false;
+            const double decibels = value.section(QLatin1Char(' '), 1, 1).toDouble(&ok);
+            if (ok) peak = decibels;
+        }
+    }
+    return peak;
 }
 
 static QPointF cursorAt(const QVector<RawCursorSample> &samples, qint64 time)
@@ -754,6 +792,19 @@ int Recorder::daemonMain(const QStringList &arguments)
     options.microphoneAudio = arguments.contains(QStringLiteral("--microphone-audio"));
     options.microphoneDevice = valueAfter(arguments, QStringLiteral("--microphone-device"));
     if (options.microphoneDevice.isEmpty()) options.microphoneDevice = QStringLiteral("default_input");
+    // A microphone on a dock or a camera comes and goes with it.
+    bool microphoneReplaced = false;
+    if (options.microphoneAudio) {
+        QStringList sources;
+        const QStringList lines = commandOutput(QStringLiteral("pactl"),
+            {QStringLiteral("list"), QStringLiteral("short"), QStringLiteral("sources")})
+                .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        for (const QString &line : lines) sources << line.section(QLatin1Char('\t'), 1, 1);
+        if (microphoneMissing(options.microphoneDevice, sources)) {
+            options.microphoneDevice = QStringLiteral("default_input");
+            microphoneReplaced = true;
+        }
+    }
     options.noOpen = arguments.contains(QStringLiteral("--no-open"));
     options.noBar = arguments.contains(QStringLiteral("--no-bar"));
     options.countdown = arguments.contains(QStringLiteral("--countdown"));
@@ -867,6 +918,7 @@ int Recorder::daemonMain(const QStringList &arguments)
     qint64 audioStartedUs = 0;
     bool audioActive = false;
     bool audioMuxed = !audioRequested;
+    double microphonePeak = qQNaN();
     qint64 countdownEndUs = 0;
     QJsonObject state{{"pid", daemonPid}, {"bundle", bundle}, {"started_us", startedUs},
                       {"daemon_started_us", daemonStartUs},
@@ -1053,7 +1105,9 @@ int Recorder::daemonMain(const QStringList &arguments)
         runOptionalDetached(QStringLiteral("omarchy-notification-send"),
                             {QStringLiteral("-t"), QStringLiteral("3000"),
                              QStringLiteral("Recording started"),
-                             QStringLiteral("Stop with the bar, the REC indicator, or your keybind")});
+                             microphoneReplaced
+                                 ? QStringLiteral("The chosen microphone isn't plugged in, so the default one is recording")
+                                 : QStringLiteral("Stop with the bar, the REC indicator, or your keybind")});
     runOptionalDetached(QStringLiteral("omarchy-shell"),
                         {QStringLiteral("-q"), QStringLiteral("omarchy.indicators"), QStringLiteral("refresh")});
     while (!stopRequested && !captureLoopFailed) {
@@ -1121,14 +1175,22 @@ int Recorder::daemonMain(const QStringList &arguments)
         return removed ? 0 : 2;
     }
     bool forcedStop = false;
-    if (options.webcam)
-        updateRecordingState(QJsonObject{{QStringLiteral("camera_stop"), true}});
+    // The bar and the launcher say Saving while the capture finishes and the audio is muxed.
+    QJsonObject stopping{{QStringLiteral("stopping"), true}};
+    if (options.webcam) stopping.insert(QStringLiteral("camera_stop"), true);
+    updateRecordingState(stopping);
     if (nativeCapture) {
         if (!screenCapture.finish(&error)) captureLoopFailed = true;
         if (audioActive)
             audioMuxed = finishAudioCapture(&audioRecorder, nativeVideo, audioVideo, video,
                                             screenCapture.firstFrameUs(), audioStartedUs,
                                             screenCapture.videoDurationUs());
+        // A killed ffmpeg wrote no report.
+        QFile audioLog(audioVideo + QStringLiteral(".log"));
+        if (audioActive && options.microphoneAudio && audioRecorder.exitStatus() == QProcess::NormalExit
+            && audioLog.open(QIODevice::ReadOnly))
+            microphonePeak = microphonePeakDb(QString::fromUtf8(audioLog.readAll()));
+        audioLog.remove();
         if (!audioMuxed) {
             QFile::remove(video);
             if (nativeVideo != video) QFile::rename(nativeVideo, video);
@@ -1289,11 +1351,15 @@ int Recorder::daemonMain(const QStringList &arguments)
             debugLog.flush();
         }
         const bool audioLost = nativeCapture && audioRequested && !audioMuxed;
+        // A real microphone always picks up some noise; exact zeros mean it is muted or dead.
+        const bool microphoneSilent = !audioLost && microphonePeak <= -90.0;
         runOptionalDetached(QStringLiteral("omarchy-notification-send"),
                             {audioLost ? QStringLiteral("Recording saved without audio")
-                                       : QStringLiteral("Recording saved"),
+                             : microphoneSilent ? QStringLiteral("Recording saved with a silent microphone")
+                                                : QStringLiteral("Recording saved"),
                              audioLost ? QStringLiteral("No sound arrived from the desktop or microphone")
-                                       : QFileInfo(bundle).completeBaseName(),
+                             : microphoneSilent ? QStringLiteral("It recorded no sound at all. Check that it isn't muted.")
+                                                : QFileInfo(bundle).completeBaseName(),
                              QStringLiteral("--exec"), QCoreApplication::applicationFilePath(),
                              QStringLiteral("edit"), bundle});
         if (!options.noOpen)

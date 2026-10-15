@@ -5,6 +5,8 @@
 #include <QCameraDevice>
 #include <QCameraFormat>
 #include <QDateTime>
+#include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QMediaCaptureSession>
 #include <QMediaDevices>
@@ -37,23 +39,6 @@ qint64 monotonicUs()
     return qint64(value.tv_sec) * 1000000 + value.tv_nsec / 1000;
 }
 
-QCameraDevice selectedDevice(const QString &path)
-{
-    const QByteArray pathBytes = QFileInfo(path).absoluteFilePath().toUtf8();
-    const QString baseName = QFileInfo(path).fileName();
-    const QList<QCameraDevice> devices = QMediaDevices::videoInputs();
-    for (const QCameraDevice &device : devices)
-        if (device.id() == pathBytes) return device;
-    for (const QCameraDevice &device : devices) {
-        const QString id = QString::fromUtf8(device.id());
-        if (id.contains(path) || id.endsWith(baseName)
-            || device.description().contains(path, Qt::CaseInsensitive)
-            || device.description().contains(baseName, Qt::CaseInsensitive))
-            return device;
-    }
-    return {};
-}
-
 QCameraFormat selectedFormat(const QCameraDevice &device, int requestedHeight)
 {
     QCameraFormat best;
@@ -80,6 +65,75 @@ QCameraFormat selectedFormat(const QCameraDevice &device, int requestedHeight)
 bool Omareel::cameraCanRecord(const QCameraDevice &device)
 {
     return !selectedFormat(device, 1080).isNull();
+}
+
+QString Omareel::stableCameraPath(const QString &devicePath, const QString &devRoot,
+                                  const QString &sysRoot)
+{
+    const QString node = QFileInfo(devicePath).canonicalFilePath();
+    if (node.isEmpty()) return devicePath;
+    const auto linkTo = [&node](const QString &directory) {
+        QString found;
+        const QFileInfoList links = QDir(directory).entryInfoList(
+            QDir::Files | QDir::System | QDir::NoDotAndDotDot, QDir::Name);
+        for (const QFileInfo &link : links) {
+            if (link.canonicalFilePath() != node) continue;
+            // by-path also names each node after the USB revision it enumerated at, which
+            // changes with the cable or port speed.
+            if (!link.fileName().contains(QLatin1String("-usbv"))) return link.absoluteFilePath();
+            if (found.isEmpty()) found = link.absoluteFilePath();
+        }
+        return found;
+    };
+    // udev names a by-id link after the USB device's serial and the node's index, so the IR sensor
+    // beside a laptop webcam, or two identical cameras without serial numbers, share one name
+    // and it points at whichever node udev handled last.
+    const QString classDirectory = sysRoot + QStringLiteral("/class/video4linux");
+    const auto identity = [&classDirectory](const QString &name) {
+        const QString directory = classDirectory + QLatin1Char('/') + name;
+        const QString interface = QFileInfo(directory + QStringLiteral("/device")).canonicalFilePath();
+        if (interface.isEmpty()) return QString();
+        const QString usbDevice = QFileInfo(interface).absolutePath();
+        const auto read = [](const QString &path) {
+            QFile file(path);
+            return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()).trimmed() : QString();
+        };
+        return QStringList{read(usbDevice + QStringLiteral("/idVendor")),
+                           read(usbDevice + QStringLiteral("/idProduct")),
+                           read(usbDevice + QStringLiteral("/serial")),
+                           read(directory + QStringLiteral("/index"))}.join(QLatin1Char(':'));
+    };
+    const QString name = QFileInfo(node).fileName();
+    const QString own = identity(name);
+    bool shared = false;
+    const QStringList others = QDir(classDirectory).entryList(QDir::AllEntries | QDir::NoDotAndDotDot);
+    for (const QString &other : others)
+        shared = shared || (other != name && !own.isEmpty() && identity(other) == own);
+    if (!shared)
+        if (const QString link = linkTo(devRoot + QStringLiteral("/v4l/by-id")); !link.isEmpty()) return link;
+    if (const QString link = linkTo(devRoot + QStringLiteral("/v4l/by-path")); !link.isEmpty()) return link;
+    return node;
+}
+
+QString Omareel::cameraNodePath(const QString &path)
+{
+    return QFileInfo(path).canonicalFilePath();
+}
+
+QString Omareel::cameraIdNode(const QByteArray &id)
+{
+    const QString text = QString::fromUtf8(id);
+    const qsizetype marker = text.indexOf(QLatin1String("/dev/video"));
+    return marker < 0 ? QString() : text.mid(marker).section(QLatin1Char(' '), 0, 0);
+}
+
+QCameraDevice Omareel::cameraDeviceForPath(const QList<QCameraDevice> &devices, const QString &path)
+{
+    const QString node = cameraNodePath(path);
+    if (node.isEmpty()) return {};
+    for (const QCameraDevice &device : devices)
+        if (cameraIdNode(device.id()) == node) return device;
+    return {};
 }
 
 FirstFrameTimestamp::FirstFrameTimestamp(QString path): m_path(std::move(path))
@@ -370,7 +424,7 @@ void CameraCapture::start()
     // The preview keeps the previous camera's final frame otherwise, which looks like a frozen
     // feed while this one starts or after it fails.
     if (m_previewSink) m_previewSink->setVideoFrame({});
-    const QCameraDevice device = selectedDevice(m_devicePath);
+    const QCameraDevice device = cameraDeviceForPath(QMediaDevices::videoInputs(), m_devicePath);
     if (device.isNull()) { fail(QStringLiteral("Selected camera is unavailable")); return; }
     m_camera = std::make_unique<QCamera>(device);
     connect(m_camera.get(), &QCamera::errorOccurred, this,
