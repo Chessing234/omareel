@@ -307,7 +307,7 @@ protected:
             finish();
         };
         QObject::connect(&timer, &QTimer::timeout, &timer, [&] {
-            if (m_stopDeadline.load()) { finish(); return; }
+            const bool stopping = m_stopDeadline.load() != 0;
             QVideoFrame frame;
             {
                 QMutexLocker lock(&m_mutex);
@@ -324,16 +324,22 @@ protected:
                 }
                 latest = std::move(packed);
             }
-            if (latest.pixels.isEmpty()) { timer.start(33); return; }
+            if (latest.pixels.isEmpty()) {
+                if (stopping) { finish(); return; }
+                timer.start(33);
+                return;
+            }
             if (!launched) {
                 const bool nvenc = cachedPreferredEncoderAvailable();
                 QStringList args{"-hide_banner", "-loglevel", "error", "-y", "-f", "rawvideo",
                     "-pixel_format", latest.pixelFormat, "-video_size",
                     QStringLiteral("%1x%2").arg(latest.size.width()).arg(latest.size.height()),
                     "-framerate", "30", "-i", "pipe:0", "-an", "-c:v", nvenc ? "h264_nvenc" : "libx264"};
-                args += nvenc ? QStringList{"-preset", "p4", "-rc", "vbr", "-cq", "23"}
-                              : QStringList{"-preset", "veryfast", "-crf", "20"};
-                args += QStringList{"-bf", "0", "-g", "60", "-pix_fmt", "yuv420p", "-profile:v", "high",
+                args += nvenc ? QStringList{"-preset", "p4", "-zerolatency", "1", "-rc", "vbr", "-cq", "23"}
+                              : QStringList{"-preset", "veryfast", "-tune", "zerolatency", "-crf", "20"};
+                // 30 frames at 30 fps is one second, and zerolatency stops that GOP
+                // staying inside the encoder when the recording stops.
+                args += QStringList{"-bf", "0", "-g", "30", "-pix_fmt", "yuv420p", "-profile:v", "high",
                                     "-fps_mode", "cfr", "-video_track_timescale", "30000",
                                     "-movflags", "+faststart", m_path};
                 QTextStream(stderr) << "Camera encoder: " << (nvenc ? "h264_nvenc" : "libx264")
@@ -366,6 +372,10 @@ protected:
             ++count;
             const auto stderrText = process.readAllStandardError();
             if (!stderrText.isEmpty()) qWarning().noquote() << "Camera ffmpeg:" << QString::fromUtf8(stderrText).right(2048);
+            // The frame that was waiting in the mailbox has to reach the file
+            // before the pipe closes, or the tail of the camera track is the
+            // frame from the previous tick.
+            if (stopping) { finish(); return; }
             const qint64 delay = cameraFrameDeadlineUs(firstUs, count) - monotonicUs();
             timer.start(int(std::max<qint64>(0, (delay + 999) / 1000)));
         });

@@ -929,11 +929,13 @@ bool ScreenCapture::start(const ScreenCaptureConfig &config, QString *error)
     else if (preferred && smallFrame)
         arguments << QStringLiteral("h264_nvenc") << QStringLiteral("-preset") << QStringLiteral("p4")
                   << QStringLiteral("-tune") << QStringLiteral("lossless")
+                  << QStringLiteral("-zerolatency") << QStringLiteral("1")
                   << QStringLiteral("-g") << QString::number(d->config.fps)
                   << QStringLiteral("-bf") << QStringLiteral("0");
     else if (preferred)
         arguments << QStringLiteral("h264_nvenc") << QStringLiteral("-preset") << QStringLiteral("p4")
                   << QStringLiteral("-tune") << QStringLiteral("hq")
+                  << QStringLiteral("-zerolatency") << QStringLiteral("1")
                   << QStringLiteral("-rc") << QStringLiteral("vbr")
                   << QStringLiteral("-cq") << QStringLiteral("16")
                   << QStringLiteral("-b:v") << QStringLiteral("0")
@@ -944,7 +946,10 @@ bool ScreenCapture::start(const ScreenCaptureConfig &config, QString *error)
     // Without NVENC, libx264 it is. h264_vulkan looks like the hardware alternative, but uploading
     // BGRA frames through hwupload held it below libx264 veryfast at every capture size on the N1X.
     else
+        // -g is one second. Without zerolatency the encoder may hold that GOP and a
+        // stop never writes it, so the raw recording ends about a second early.
         arguments << QStringLiteral("libx264") << QStringLiteral("-preset") << QStringLiteral("veryfast")
+                  << QStringLiteral("-tune") << QStringLiteral("zerolatency")
                   << QStringLiteral("-crf") << (smallFrame ? QStringLiteral("10") : QStringLiteral("16"))
                   << QStringLiteral("-g") << QString::number(d->config.fps)
                   << QStringLiteral("-bf") << QStringLiteral("0");
