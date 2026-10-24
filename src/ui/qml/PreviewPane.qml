@@ -241,33 +241,41 @@ FocusScope {
                 }
             }
         }
-        Rectangle {
+        Item {
             id: importNotice
             objectName: "importNotice"
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.top: previewFrame.top
             anchors.topMargin: 14
             visible: editor.importing || editor.importError.length > 0
-            color: theme.popupBackground
-            border.width: 2
-            border.color: editor.importError.length > 0 ? theme.record : theme.popupBorder
-            radius: theme.radius
-            width: Math.min(previewFrame.width - 28, importRow.implicitWidth + 20)
-            height: 30
+            width: Math.min(previewFrame.width - 28, importRow.implicitWidth + 32)
+            height: 32
             z: 40
+            OmPopupCard { anchors.fill: parent; padding: 0; radius: theme.controlRadius }
             Row {
                 id: importRow
                 anchors.centerIn: parent
-                width: Math.min(implicitWidth, importNotice.width - 20)
-                spacing: 10
+                width: Math.min(implicitWidth, importNotice.width - 32)
+                spacing: 8
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 8; height: 8; radius: 4
+                    color: editor.importError.length > 0 ? theme.record : theme.accent
+                    SequentialAnimation on opacity {
+                        running: editor.importing
+                        loops: Animation.Infinite
+                        NumberAnimation { from: 1; to: .3; duration: 650; easing.type: Easing.InOutSine }
+                        NumberAnimation { from: .3; to: 1; duration: 650; easing.type: Easing.InOutSine }
+                    }
+                }
                 Label {
-                    width: Math.min(implicitWidth, importNotice.width - 20
+                    width: Math.min(implicitWidth, importNotice.width - 32 - 16
                         - (dismissImport.visible ? dismissImport.width + importRow.spacing : 0))
                     anchors.verticalCenter: parent.verticalCenter
                     elide: Text.ElideRight
                     text: editor.importing ? "Adding clip…" : editor.importError
-                    color: theme.foreground
-                    font.pixelSize: theme.font.body
+                    color: theme.textStrong
+                    font.pixelSize: theme.type.body
                     font.weight: Font.Medium
                 }
                 IconToolButton {

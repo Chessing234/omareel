@@ -185,14 +185,14 @@ FocusScope {
             delegate: Row {
                 required property var modelData
                 required property int index
-                x: 14
+                x: 10
                 y: 32 + index * 56 + (48 - height) / 2
-                spacing: 7
+                spacing: 5
                 IconImage {
                     anchors.verticalCenter: parent.verticalCenter
-                    width: 13; height: 13
+                    width: 12; height: 12
                     source: "qrc:/omareel/assets/icons/lucide/" + modelData.icon
-                    sourceSize: Qt.size(13, 13)
+                    sourceSize: Qt.size(12, 12)
                     color: theme.textFaint
                 }
                 Label {
