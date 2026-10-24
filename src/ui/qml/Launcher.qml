@@ -15,30 +15,37 @@ ApplicationWindow {
     // whose minimum and maximum size match in either dimension, so no window rule is needed.
     minimumWidth: 380
     maximumWidth: 380
-    minimumHeight: desiredHeight - 40
+    // Hyprland ignores a floating window's own resize requests and only clamps it into
+    // [minimum, maximum], so the height is pinned to what the content needs.
+    minimumHeight: desiredHeight
     maximumHeight: desiredHeight
     title: "Omareel"
     color: theme.surface
     font.family: theme.fontFamily
     font.pixelSize: theme.type.body
 
-    readonly property int desiredHeight: (launcher.webcam && !showingRecording ? 500 : 460)
-                                         + (launcher.captureExclusionNote.length > 0 ? 32 : 0)
+    readonly property int desiredHeight: Math.ceil(content.implicitHeight + content.anchors.topMargin
+                                                   + content.anchors.bottomMargin)
     readonly property string iconRoot: "qrc:/omareel/assets/icons/" + "luc" + "ide/"
     property bool screenshotRecording: false
     property string errorMessage: ""
     readonly property bool showingRecording: launcher.recording || screenshotRecording
     readonly property bool busy: showingRecording || launcher.startingRecording
 
-    Behavior on height { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-
     function beginRecording() {
         if (!launcher.recording)
             launcher.record()
     }
 
+    // Device menus drop below their row, or open upward when the window has no room below.
+    function openDeviceMenu(menu, row) {
+        const below = row.mapToItem(window.contentItem, 0, row.height - 6).y
+        const fits = below + menu.implicitHeight <= window.height - menu.margins
+        menu.transformOrigin = fits ? Popup.Top : Popup.Bottom
+        menu.popup(row, 0, fits ? row.height - 6 : 6 - menu.implicitHeight)
+    }
     function prepareScreenshot(view) {
-        if (view === "webcam-menu") webcamMenu.popup(webcamRow, 44, webcamRow.height)
+        if (view === "webcam-menu") openDeviceMenu(webcamMenu, webcamRow)
         else if (view === "webcam-on") launcher.webcam = true
         else if (view === "recording") screenshotRecording = true
         else if (view === "settings") settingsPopover.open()
@@ -176,6 +183,7 @@ ApplicationWindow {
     Timer { id: errorTimer; interval: 5000; onTriggered: window.errorMessage = "" }
 
     ColumnLayout {
+        id: content
         anchors.fill: parent
         anchors.leftMargin: 20
         anchors.rightMargin: 20
@@ -211,7 +219,7 @@ ApplicationWindow {
             }
         }
 
-        Item { Layout.fillHeight: true; Layout.minimumHeight: 4; Layout.maximumHeight: 18 }
+        Item { Layout.fillHeight: true; Layout.preferredHeight: 18 }
 
         Item {
             Layout.fillWidth: true
@@ -387,7 +395,7 @@ ApplicationWindow {
             }
         }
 
-        Item { Layout.fillHeight: true; Layout.minimumHeight: 8; Layout.maximumHeight: 22 }
+        Item { Layout.fillHeight: true; Layout.preferredHeight: 22 }
 
         Label {
             Layout.fillWidth: true
@@ -397,6 +405,12 @@ ApplicationWindow {
             color: theme.textMuted
             font.pixelSize: theme.type.caption
             wrapMode: Text.WordWrap
+            HoverHandler { id: noteHover }
+            OmToolTip {
+                visible: noteHover.hovered && launcher.captureExclusionReason !== ""
+                text: launcher.captureExclusionReason
+                placement: "above"
+            }
         }
 
         Rectangle {
@@ -431,7 +445,7 @@ ApplicationWindow {
                     enabled: !window.busy
                     level: launcher.microphone && !window.busy ? launcher.microphoneLevel : -1
                     onToggled: launcher.microphone = !launcher.microphone
-                    onMenuRequested: microphoneMenu.popup(microphoneRow, 56, microphoneRow.height - 6)
+                    onMenuRequested: window.openDeviceMenu(microphoneMenu, microphoneRow)
                 }
                 Rectangle { Layout.fillWidth: true; Layout.leftMargin: 56; Layout.preferredHeight: 1; color: theme.separator }
                 SourceRow {
@@ -445,14 +459,13 @@ ApplicationWindow {
                     checked: launcher.webcam
                     enabled: !window.busy && (launcher.webcam || launcher.webcamDevices.length > 0)
                     onToggled: launcher.webcam = !launcher.webcam
-                    onMenuRequested: webcamMenu.popup(webcamRow, 56, webcamRow.height - 6)
+                    onMenuRequested: window.openDeviceMenu(webcamMenu, webcamRow)
                 }
                 Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: launcher.webcam && !window.showingRecording ? 40 : 0
                     opacity: launcher.webcam && !window.showingRecording ? 1 : 0
                     clip: true
-                    Behavior on Layout.preferredHeight { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                     Behavior on opacity { NumberAnimation { duration: 160 } }
                     RowLayout {
                         anchors.fill: parent
@@ -487,7 +500,7 @@ ApplicationWindow {
             }
         }
 
-        Item { Layout.fillHeight: true; Layout.minimumHeight: 10; Layout.maximumHeight: 18 }
+        Item { Layout.fillHeight: true; Layout.preferredHeight: 18 }
 
         RowLayout {
             Layout.fillWidth: true
@@ -519,7 +532,7 @@ ApplicationWindow {
 
     OmMenu {
         id: microphoneMenu
-        width: 280
+        width: microphoneRow.width
         Instantiator {
             model: launcher.audioDevices
             delegate: OmMenuItem {
@@ -535,7 +548,7 @@ ApplicationWindow {
 
     OmMenu {
         id: webcamMenu
-        width: 280
+        width: webcamRow.width
         Instantiator {
             model: launcher.webcamDevices
             delegate: OmMenuItem {

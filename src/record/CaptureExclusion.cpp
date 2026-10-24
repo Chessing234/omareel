@@ -92,6 +92,7 @@ CaptureExclusion::Status CaptureExclusion::ensureLoaded()
         if (!loaded || reply.trimmed() != "ok") return {false, built, "Hyprland refused to load the capture exclusion plugin", {}};
         return status();
     }
+    result.reason = "Capture exclusion plugin is not installed or was not built (it needs Hyprland's headers)";
     return result;
 }
 

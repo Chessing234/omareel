@@ -4,6 +4,7 @@ import QtQuick.Controls
 Menu {
     id: root
     padding: 4
+    margins: 8
     transformOrigin: Popup.Top
     background: OmPopupCard { padding: 0; implicitWidth: 180 }
     enter: Transition {
