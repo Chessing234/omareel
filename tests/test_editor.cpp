@@ -55,6 +55,7 @@ private slots:
     {
         Editor editor(m_bundle);
         QVERIFY2(editor.isValid(), qPrintable(editor.errorString()));
+        QCOMPARE(editor.bundleName(), QStringLiteral("editor"));
         QCOMPARE(editor.sourceWidth(), 320);
         QVERIFY(!editor.hasAudio());
         QVERIFY(!editor.hasDesktopAudio());

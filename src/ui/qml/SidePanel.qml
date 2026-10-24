@@ -6,33 +6,42 @@ import Omareel.Ui
 Rectangle {
     id: root
     objectName: "sidePanel"
-    color: theme.surfaceRaised
+    color: theme.surface
     property int section: 0
     property int displayedSection: 0
     property string forcedTooltip: ""
     readonly property var sections: [
-        {name:"Background", meta:"", icon:"palette.svg"},
-        {name:"Shape", meta:"FRAME & SHADOW", icon:"square.svg"},
-        {name:"Cursor", meta:"POINTER & CLICKS", icon:"mouse-pointer-2.svg"},
-        {name:"Zoom", meta:"FOCUS & MOTION", icon:"zoom-in.svg"},
-        {name:"Clip", meta:"TRIM & SPEED", icon:"film.svg"},
-        {name:"Camera", meta:"WEBCAM BUBBLE", icon:"camera.svg"},
-        {name:"Keystrokes", meta:"SHORTCUT OVERLAY", icon:"keyboard.svg"},
-        {name:"Audio", meta:"TRACKS & VOLUME", icon:"volume-2.svg"}
+        {name:"Background", meta:"Canvas behind the video", icon:"palette.svg"},
+        {name:"Shape", meta:"Frame, shadow, and border", icon:"square.svg"},
+        {name:"Cursor", meta:"Pointer, clicks, and motion", icon:"mouse-pointer-2.svg"},
+        {name:"Zoom", meta:"Focus and camera motion", icon:"zoom-in.svg"},
+        {name:"Clip", meta:"Trim and speed", icon:"film.svg"},
+        {name:"Camera", meta:"Webcam bubble", icon:"camera.svg"},
+        {name:"Keystrokes", meta:"Shortcut overlay", icon:"keyboard.svg"},
+        {name:"Audio", meta:"Tracks and volume", icon:"volume-2.svg"}
     ]
 
     onSectionChanged: {
-        if (displayedSection !== section) panelCrossfade.restart()
+        if (displayedSection !== section) {
+            panelSwap.slideFrom = section > displayedSection ? 10 : -10
+            panelSwap.restart()
+        }
     }
     SequentialAnimation {
-        id: panelCrossfade
-        NumberAnimation { target: panelLoader; property: "opacity"; to: 0; duration: 60; easing.type: Easing.OutCubic }
-        ScriptAction { script: root.displayedSection = root.section }
-        NumberAnimation { target: panelLoader; property: "opacity"; to: 1; duration: 60; easing.type: Easing.InCubic }
+        id: panelSwap
+        property real slideFrom: 10
+        ParallelAnimation {
+            NumberAnimation { target: panelLoader; property: "opacity"; to: 0; duration: 70; easing.type: Easing.InCubic }
+        }
+        ScriptAction { script: { root.displayedSection = root.section; panelLoader.slide = panelSwap.slideFrom } }
+        ParallelAnimation {
+            NumberAnimation { target: panelLoader; property: "opacity"; to: 1; duration: 180; easing.type: Easing.OutCubic }
+            NumberAnimation { target: panelLoader; property: "slide"; to: 0; duration: 260; easing.type: Easing.OutQuint }
+        }
     }
 
     function panelMeta(index) {
-        return index === 0 ? "CANVAS BEHIND THE VIDEO" : root.sections[index].meta
+        return root.sections[index].meta
     }
 
     function setBackgroundExpanded(value) {
@@ -65,79 +74,69 @@ Rectangle {
         spacing: 0
 
         Rectangle {
+            id: rail
             Layout.preferredWidth: 56
             Layout.minimumWidth: 56
             Layout.maximumWidth: 56
             Layout.fillHeight: true
-            color: theme.surfaceRaised
+            color: theme.surface
 
+            Rectangle {
+                anchors.left: parent.left
+                width: 1
+                height: parent.height
+                color: theme.hairline
+            }
             Rectangle {
                 anchors.right: parent.right
                 width: 1
                 height: parent.height
                 color: theme.hairline
             }
+            // One indicator glides between sections instead of each button lighting its own.
+            Rectangle {
+                id: railIndicator
+                readonly property Item target: railRepeater.count > root.section ? railRepeater.itemAt(root.section) : null
+                x: 0
+                y: target ? railColumn.y + target.y + (target.height - height) / 2 : 0
+                width: 2
+                height: 18
+                radius: 1
+                color: theme.accent
+                Behavior on y { NumberAnimation { duration: 280; easing.type: Easing.OutQuint } }
+            }
             Column {
+                id: railColumn
+                y: 10
                 width: parent.width
-                topPadding: 8
                 spacing: 4
                 Repeater {
+                    id: railRepeater
                     model: root.sections
                     delegate: OmIconButton {
                         id: railButton
                         required property var modelData
                         required property int index
-                        property bool tooltipReady: false
                         objectName: "railButton-" + modelData.name
                         anchors.horizontalCenter: parent.horizontalCenter
-                        width: theme.space.controlHeight
-                        height: theme.space.controlHeight
+                        width: 36
+                        height: 36
                         checkable: true
                         checked: root.section === index
-                        icon.width: 14
-                        icon.height: 14
+                        icon.width: 17
+                        icon.height: 17
                         icon.source: "qrc:/omareel/assets/icons/lucide/" + modelData.icon
-                        icon.color: checked ? theme.accent : theme.textMuted
+                        icon.color: checked ? theme.accent : hovered ? theme.textStrong : theme.textMuted
                         Accessible.name: modelData.name
                         onClicked: root.section = index
-                        onHoveredChanged: {
-                            if (hovered) tooltipDelay.restart()
-                            else { tooltipDelay.stop(); tooltipReady = false }
-                        }
-                        Rectangle {
-                            x: -14
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 2
-                            height: 20
-                            color: theme.foreground
-                            visible: railButton.checked
-                        }
-                        Timer {
-                            id: tooltipDelay
-                            interval: 300
-                            onTriggered: railButton.tooltipReady = true
-                        }
-                        Rectangle {
-                            visible: root.forcedTooltip === modelData.name
-                                || (railButton.hovered && railButton.tooltipReady)
-                            anchors.right: parent.left
-                            anchors.rightMargin: 8
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: tooltipLabel.implicitWidth + 18
-                            height: 28
-                            radius: theme.radius
-                            color: theme.tooltipBackground
-                            border.width: 1
-                            border.color: theme.tooltipBorder
-                            z: 1000
-                            Label {
-                                id: tooltipLabel
-                                anchors.centerIn: parent
-                                text: modelData.name
-                                color: theme.foreground
-                                font.pixelSize: theme.font.bodySmall
-                                font.weight: Font.DemiBold
-                            }
+                        tooltipText: modelData.name
+                        tooltipPlacement: "left"
+                        OmToolTip {
+                            target: railButton
+                            placement: "left"
+                            delay: 0
+                            visible: root.forcedTooltip === railButton.modelData.name
+                            text: railButton.modelData.name
                         }
                     }
                 }
@@ -150,35 +149,20 @@ Rectangle {
             Layout.minimumWidth: 320
             Layout.maximumWidth: 320
             Layout.fillHeight: true
-            color: theme.surfaceRaised
+            color: theme.surface
 
-            Rectangle {
-                anchors.left: parent.left
-                width: 1
-                height: parent.height
-                color: theme.hairline
-            }
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 0
 
-                ColumnLayout {
+                OmHero {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 88
-                    Layout.minimumHeight: 88
-                    Layout.maximumHeight: 88
                     Layout.leftMargin: theme.space.panelPadding
                     Layout.rightMargin: theme.space.panelPadding
-                    spacing: theme.space.sm
-                    Item { Layout.preferredHeight: theme.space.lg }
-                    OmHero {
-                        Layout.fillWidth: true
-                        iconSource: "qrc:/omareel/assets/icons/lucide/" + root.sections[root.section].icon
-                        title: root.sections[root.section].name
-                        meta: root.panelMeta(root.section)
-                    }
-                    Item { Layout.fillHeight: true }
-                    OmSeparator { Layout.fillWidth: true }
+                    Layout.topMargin: 18
+                    Layout.bottomMargin: 4
+                    title: root.sections[root.section].name
+                    meta: root.panelMeta(root.section)
                 }
                 ScrollView {
                     id: scroller
@@ -187,15 +171,33 @@ Rectangle {
                     clip: true
                     contentWidth: width
                     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                    ScrollBar.vertical.width: 6
+                    ScrollBar.vertical: ScrollBar {
+                        id: verticalBar
+                        parent: scroller
+                        x: scroller.width - width - 2
+                        y: 2
+                        height: scroller.availableHeight - 4
+                        width: 8
+                        padding: 2
+                        policy: ScrollBar.AsNeeded
+                        contentItem: Rectangle {
+                            implicitWidth: 4
+                            radius: theme.rounded ? 2 : 0
+                            color: verticalBar.pressed ? theme.textMuted : theme.textFaint
+                            opacity: verticalBar.active || verticalBar.hovered ? .9 : 0
+                            Behavior on opacity { NumberAnimation { duration: 240 } }
+                        }
+                        background: Item {}
+                    }
                     Item {
                         width: scroller.width
-                        implicitHeight: panelLoader.item ? panelLoader.item.implicitHeight + 20 + theme.space.panelPadding : 0
+                        implicitHeight: panelLoader.item ? panelLoader.item.implicitHeight + 20 + theme.space.panelPadding * 2 : 0
                         height: implicitHeight
                         Loader {
                             id: panelLoader
-                            x: theme.space.panelPadding
-                            y: 20
+                            property real slide: 0
+                            x: theme.space.panelPadding + slide
+                            y: 16
                             width: inspectorPanel.width - theme.space.panelPadding * 2
                             height: item ? item.implicitHeight : 0
                             sourceComponent: root.displayedSection === 0 ? backgroundPanel

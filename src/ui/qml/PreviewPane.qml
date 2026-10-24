@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Effects
+import Omareel.Ui
 
 FocusScope {
     id: root
@@ -17,7 +18,7 @@ FocusScope {
              + String(whole).padStart(2, "0") + "." + (remainder % 10)
     }
     clip: true
-    Rectangle { anchors.fill: parent; color: theme.surface }
+    Rectangle { anchors.fill: parent; color: theme.canvas }
     MouseArea {
         anchors.fill: parent
         onPressed: root.forceActiveFocus()
@@ -26,10 +27,10 @@ FocusScope {
     Item {
         id: previewArea
         anchors.fill: parent
-        anchors.leftMargin: 24
-        anchors.rightMargin: 24
-        anchors.topMargin: 24
-        anchors.bottomMargin: 44
+        anchors.leftMargin: 32
+        anchors.rightMargin: 32
+        anchors.topMargin: 28
+        anchors.bottomMargin: 28
 
         Rectangle {
             id: shadowShape
@@ -43,12 +44,12 @@ FocusScope {
             anchors.fill: previewFrame
             source: shadowShape
             shadowEnabled: true
-            shadowColor: theme.dark ? Qt.alpha(theme.surfaceRaised, .65)
-                                    : Qt.alpha(theme.foreground, .16)
+            shadowColor: theme.shadow
             shadowOpacity: 1
             shadowBlur: 1
-            blurMax: 6
-            shadowVerticalOffset: 2
+            blurMax: 40
+            shadowVerticalOffset: 14
+            shadowScale: .97
             autoPaddingEnabled: true
         }
         Rectangle {
@@ -118,12 +119,12 @@ FocusScope {
                 y: scaled.zoomOriginY + editor.zoom.scale * (scaled.frameY + targetY * scaled.videoHeight - scaled.zoomOriginY) - height / 2
                 width: 18 / scaled.scale
                 height: width
-                radius: theme.radius
+                radius: width / 2
                 color: theme.accentSoft
                 border.width: 2 / scaled.scale
                 border.color: theme.accent
                 z: 20
-                Rectangle { anchors.centerIn: parent; width: 4 / scaled.scale; height: width; radius: theme.radius; color: theme.accent }
+                Rectangle { anchors.centerIn: parent; width: 4 / scaled.scale; height: width; radius: width / 2; color: theme.accent }
             }
             Rectangle {
                 id: cropRect
@@ -141,7 +142,7 @@ FocusScope {
                     delegate: Rectangle {
                         id: cropHandle
                         required property var modelData
-                        width: cropRect.handleSize; height: width; radius: theme.radius
+                        width: cropRect.handleSize; height: width; radius: theme.smallRadius / scaled.scale
                         x: modelData.x * cropRect.width - width / 2
                         y: modelData.y * cropRect.height - height / 2
                         color: theme.accent
@@ -198,30 +199,46 @@ FocusScope {
         Rectangle {
             anchors.fill: parent
             color: "transparent"
-            border.color: theme.hairlineStrong
+            border.color: Qt.alpha("white", theme.dark ? .06 : 0)
             border.width: 1
             radius: theme.radius
             z: 30
         }
-        Rectangle {
+        Item {
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.top: previewFrame.top
             anchors.topMargin: 14
-            visible: editor.pickingZoomTarget
-            color: theme.popupBackground
-            border.width: 2
-            border.color: theme.popupBorder
-            radius: theme.radius
-            width: pickHint.implicitWidth + 20
-            height: 28
+            width: pickHint.implicitWidth + 36
+            height: 32
             z: 40
-            Label {
-                id: pickHint
+            opacity: editor.pickingZoomTarget ? 1 : 0
+            visible: opacity > 0
+            scale: editor.pickingZoomTarget ? 1 : .94
+            Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+            Behavior on scale { NumberAnimation { duration: 220; easing.type: Easing.OutBack } }
+            OmPopupCard { anchors.fill: parent; padding: 0; radius: theme.controlRadius }
+            Row {
                 anchors.centerIn: parent
-                text: "Click where the zoom should center"
-                color: theme.foreground
-                font.pixelSize: theme.font.body
-                font.weight: Font.Medium
+                spacing: 8
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 8; height: 8; radius: 4
+                    color: theme.accent
+                    SequentialAnimation on opacity {
+                        running: editor.pickingZoomTarget
+                        loops: Animation.Infinite
+                        NumberAnimation { from: 1; to: .3; duration: 650; easing.type: Easing.InOutSine }
+                        NumberAnimation { from: .3; to: 1; duration: 650; easing.type: Easing.InOutSine }
+                    }
+                }
+                Label {
+                    id: pickHint
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Click where the zoom should center"
+                    color: theme.textStrong
+                    font.pixelSize: theme.type.body
+                    font.weight: Font.Medium
+                }
             }
         }
         Rectangle {
@@ -265,25 +282,6 @@ FocusScope {
                 }
             }
         }
-        }
-        Rectangle {
-            anchors.right: previewFrame.right
-            anchors.top: previewFrame.bottom
-            anchors.topMargin: 8
-            width: timeLabel.implicitWidth + 16
-            height: 26
-            radius: 13
-            color: theme.normalFill
-            border.width: 1
-            border.color: theme.hairline
-            Label {
-                id: timeLabel
-                anchors.centerIn: parent
-                text: root.formatTenths(editor.position) + " / " + root.formatTenths(editor.duration)
-                color: theme.textMuted
-                font.family: theme.monoFamily
-                font.pixelSize: theme.font.caption
-            }
         }
     }
 }

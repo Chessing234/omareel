@@ -57,18 +57,70 @@ ColumnLayout {
         return true
     }
 
+    // Selection draws an accent ring with a small gap around the swatch.
+    component SwatchTile: Item {
+        id: tile
+        property bool selected: false
+        property bool forceHot: false
+        readonly property bool hot: tileMouse.containsMouse || forceHot
+        property bool interactive: true
+        default property alias content: face.data
+        signal activated()
+        scale: hot ? 1.04 : 1
+        z: hot ? 2 : 0
+        Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack; easing.overshoot: 1.6 } }
+        Rectangle {
+            anchors.fill: parent
+            radius: theme.controlRadius + (theme.rounded ? 3 : 0)
+            color: "transparent"
+            border.width: 2
+            border.color: tile.selected ? theme.accent : tile.hot ? theme.strokeStrong : "transparent"
+            Behavior on border.color { ColorAnimation { duration: 140 } }
+        }
+        Rectangle {
+            id: face
+            anchors.fill: parent
+            anchors.margins: tile.selected ? 4 : 0
+            radius: theme.controlRadius
+            color: theme.fill
+            clip: true
+            border.width: 1
+            border.color: theme.stroke
+            Behavior on anchors.margins { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+        }
+        MouseArea {
+            id: tileMouse
+            anchors.fill: parent
+            enabled: tile.interactive
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: tile.activated()
+        }
+    }
+
+    component SectionToggle: OmButton {
+        property bool expanded: false
+        property int hiddenCount: 0
+        Layout.fillWidth: true
+        implicitHeight: 28
+        text: expanded ? "Show less" : "Show " + hiddenCount + " more"
+        font.pixelSize: theme.type.small
+        contentColor: hovered ? theme.textStrong : theme.textMuted
+        trailingIconSource: "qrc:/omareel/assets/icons/lucide/chevron-down.svg"
+    }
+
     OmButton {
         Layout.fillWidth: true
         bordered: true
         checkable: true
         checked: root.background.type === "none"
         selected: checked
-        text: "None"
+        text: checked ? "No background" : "Remove background"
         icon.source: "qrc:/omareel/assets/icons/lucide/x.svg"
         onClicked: root.choose("none", "", null)
     }
 
-    OmSectionHeader { text: "Wallpapers" }
+    OmSectionHeader { text: "Wallpaper"; Layout.topMargin: 4 }
     GridLayout {
         id: wallpaperGrid
         Layout.fillWidth: true
@@ -79,76 +131,53 @@ ColumnLayout {
             (root.width - columnSpacing * (columns - 1)) / columns)
         Repeater {
             model: root.visibleWallpapers()
-            delegate: Rectangle {
+            delegate: SwatchTile {
                 id: wallpaperTile
                 required property var modelData
                 Layout.preferredWidth: wallpaperGrid.tileWidth
                 Layout.minimumWidth: wallpaperGrid.tileWidth
                 Layout.maximumWidth: wallpaperGrid.tileWidth
-                Layout.preferredHeight: wallpaperGrid.tileWidth * 9 / 16
-                radius: theme.radius
-                color: selected ? theme.selectedFill : theme.normalFill
-                border.width: 1
-                border.color: selected ? theme.selectedBorder : theme.normalBorder
+                Layout.preferredHeight: wallpaperGrid.tileWidth * 10 / 16
                 readonly property bool picker: modelData.picker === true
-                readonly property bool selected: !picker && root.background.type === "wallpaper"
+                interactive: !picker
+                selected: !picker && root.background.type === "wallpaper"
                     && modelData.url === root.background.resolvedImage
-                clip: true
-                scale: wallpaperMouse.containsMouse ? 1.04 : 1
-                z: wallpaperMouse.containsMouse ? 2 : 0
-                Behavior on scale { NumberAnimation { duration: 100; easing.type: Easing.OutCubic } }
-                Rectangle {
+                onActivated: root.choose("wallpaper", "background.wallpaper", wallpaperTile.modelData.path)
+                Image {
                     anchors.fill: parent
-                    anchors.margins: wallpaperTile.selected ? 3 : 1
-                    radius: theme.radius
-                    color: theme.surface
-                    clip: true
-                    Image {
-                        anchors.fill: parent
-                        visible: !wallpaperTile.picker
-                        source: wallpaperTile.picker ? "" : wallpaperTile.modelData.thumbnailUrl
-                        asynchronous: true
-                        sourceSize: Qt.size(400, 225)
-                        fillMode: Image.PreserveAspectCrop
-                    }
+                    anchors.margins: 1
+                    visible: !wallpaperTile.picker
+                    source: wallpaperTile.picker ? "" : wallpaperTile.modelData.thumbnailUrl
+                    asynchronous: true
+                    sourceSize: Qt.size(400, 250)
+                    fillMode: Image.PreserveAspectCrop
+                    opacity: status === Image.Ready ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: 220 } }
                 }
                 OmIconButton {
-                    anchors.centerIn: parent
+                    anchors.fill: parent
                     visible: wallpaperTile.picker
                     icon.source: "qrc:/omareel/assets/icons/lucide/plus.svg"
-                    icon.color: theme.foreground
-                    tooltipText: "Pick file…"
+                    tooltipText: "Choose an image…"
                     Accessible.name: "Pick file"
                     onClicked: imageDialog.open()
                 }
-                MouseArea {
-                    id: wallpaperMouse
-                    anchors.fill: parent
-                    visible: !wallpaperTile.picker
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.choose("wallpaper", "background.wallpaper", wallpaperTile.modelData.path)
-                }
-                ToolTip {
-                    visible: wallpaperMouse.containsMouse
-                    delay: 400
+                OmToolTip {
+                    target: wallpaperTile
+                    visible: wallpaperTile.hot && !wallpaperTile.picker
                     text: wallpaperTile.picker ? "" : wallpaperTile.modelData.theme + " · " + wallpaperTile.modelData.file
                 }
             }
         }
     }
-    OmButton {
-        Layout.fillWidth: true
+    SectionToggle {
         visible: root.hiddenWallpaperCount() > 0
-        bordered: true
-        text: root.showAllWallpapers ? "Show less"
-            : "Show more (" + root.hiddenWallpaperCount() + ")"
-        trailingIconSource: "qrc:/omareel/assets/icons/lucide/chevron-down.svg"
+        expanded: root.showAllWallpapers
+        hiddenCount: root.hiddenWallpaperCount()
         onClicked: root.showAllWallpapers = !root.showAllWallpapers
     }
 
-    OmSeparator { Layout.fillWidth: true }
-    OmSectionHeader { text: "Gradients" }
+    OmSectionHeader { text: "Gradient"; Layout.topMargin: 4 }
     GridLayout {
         id: gradientGrid
         Layout.fillWidth: true
@@ -160,51 +189,34 @@ ColumnLayout {
         Repeater {
             model: root.showAllGradients ? editor.gradients.length
                                          : Math.min(10, editor.gradients.length)
-            delegate: Rectangle {
+            delegate: SwatchTile {
                 id: gradientTile
                 required property int index
                 readonly property int presetIndex: index
                 objectName: "gradientTile-" + presetIndex
                 readonly property var colours: editor.gradients[presetIndex]
-                readonly property bool selected: root.background.type === "gradient"
-                    && root.gradientMatches(colours)
+                selected: root.background.type === "gradient" && root.gradientMatches(colours)
+                forceHot: root.proofHoveredIndex === presetIndex
                 Layout.preferredWidth: gradientGrid.cellWidth
                 Layout.minimumWidth: gradientGrid.cellWidth
                 Layout.maximumWidth: gradientGrid.cellWidth
                 Layout.preferredHeight: gradientGrid.cellWidth
-                radius: theme.radius
-                color: selected ? theme.selectedFill : "transparent"
-                border.width: 1
-                border.color: selected ? theme.selectedBorder : theme.normalBorder
-                scale: gradientMouse.containsMouse || root.proofHoveredIndex === presetIndex ? 1.04 : 1
-                z: gradientMouse.containsMouse || root.proofHoveredIndex === presetIndex ? 2 : 0
-                Behavior on scale { NumberAnimation { duration: 100; easing.type: Easing.OutCubic } }
+                onActivated: editor.applyGradientPreset(gradientTile.presetIndex)
                 Rectangle {
                     anchors.fill: parent
-                    anchors.margins: gradientTile.selected ? 3 : 1
-                    radius: theme.radius
                     gradient: Gradient {
+                        orientation: Gradient.Vertical
                         GradientStop { position: 0; color: gradientTile.colours[0] }
                         GradientStop { position: 1; color: gradientTile.colours[gradientTile.colours.length - 1] }
                     }
                 }
-                MouseArea {
-                    id: gradientMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: editor.applyGradientPreset(gradientTile.presetIndex)
-                }
             }
         }
     }
-    OmButton {
-        Layout.fillWidth: true
+    SectionToggle {
         visible: editor.gradients.length > 10
-        bordered: true
-        text: root.showAllGradients ? "Show less"
-            : "Show more (" + (editor.gradients.length - 10) + ")"
-        trailingIconSource: "qrc:/omareel/assets/icons/lucide/chevron-down.svg"
+        expanded: root.showAllGradients
+        hiddenCount: editor.gradients.length - 10
         onClicked: root.showAllGradients = !root.showAllGradients
     }
     PanelSlider {
@@ -216,61 +228,50 @@ ColumnLayout {
         to: 360
         value: root.background.gradient.angle
         stepSize: 1
+        suffix: "°"
     }
 
-    OmSeparator { Layout.fillWidth: true }
-    OmSectionHeader { text: "Colors" }
+    OmSectionHeader { text: "Color"; Layout.topMargin: 4 }
     RowLayout {
         Layout.fillWidth: true
-        spacing: 8
+        spacing: 6
         Repeater {
             model: root.plainColours.length + 1
-            delegate: Rectangle {
+            delegate: SwatchTile {
                 id: colourTile
                 required property int index
                 Layout.fillWidth: true
                 Layout.preferredHeight: width
-                Layout.maximumHeight: 32
+                Layout.maximumHeight: 34
                 readonly property bool custom: index === root.plainColours.length
                 readonly property color swatch: custom ? root.background.color : root.plainColours[index]
-                readonly property bool selected: !custom && root.background.type === "color"
+                selected: !custom && root.background.type === "color"
                     && String(root.background.color).toLowerCase() === String(swatch).toLowerCase()
-                radius: theme.radius
-                color: selected ? theme.selectedFill : "transparent"
-                border.width: 1
-                border.color: selected ? theme.selectedBorder : theme.normalBorder
+                interactive: !custom
+                onActivated: root.choose("color", "background.color", colourTile.swatch)
                 Rectangle {
                     anchors.fill: parent
-                    anchors.margins: colourTile.selected ? 3 : 1
-                    radius: theme.radius
+                    visible: !colourTile.custom
                     color: colourTile.swatch
                 }
                 OmIconButton {
-                    anchors.centerIn: parent
+                    anchors.fill: parent
                     visible: colourTile.custom
                     icon.source: "qrc:/omareel/assets/icons/lucide/palette.svg"
-                    icon.color: theme.foreground
-                    tooltipText: "Custom color"
+                    tooltipText: "Custom color…"
                     Accessible.name: "Custom color"
                     onClicked: colourDialog.open()
-                }
-                MouseArea {
-                    anchors.fill: parent
-                    visible: !colourTile.custom
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.choose("color", "background.color", colourTile.swatch)
                 }
             }
         }
     }
 
-    OmSeparator { Layout.fillWidth: true }
-    OmSectionHeader { text: "Blur" }
+    OmSeparator { Layout.fillWidth: true; Layout.topMargin: 4 }
     PanelSlider {
         Layout.fillWidth: true
         enabled: root.background.type !== "none"
         opacity: enabled ? 1 : .42
-        label: "Amount"
+        label: "Background blur"
         path: "background.blur"
         from: 0
         to: 100

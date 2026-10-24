@@ -161,3 +161,7 @@ The frozen engineering contract is in [docs/SPEC.md](docs/SPEC.md).
 
 Interface icons are from Lucide, used under the ISC license. See
 [`LICENSES/lucide.txt`](LICENSES/lucide.txt).
+
+The interface is set in Inter, bundled under the SIL Open Font License 1.1. See
+[`LICENSES/inter.txt`](LICENSES/inter.txt). Numbers, timecodes, and keys use your Omarchy
+monospace font.

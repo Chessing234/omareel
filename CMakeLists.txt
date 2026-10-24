@@ -93,6 +93,15 @@ qt_add_qml_module(omareel_ui STATIC
         src/ui/qml/ui/OmPopupCard.qml
         src/ui/qml/ui/OmListRow.qml
         src/ui/qml/ui/OmConfirm.qml
+        src/ui/qml/ui/OmToolTip.qml
+        src/ui/qml/ui/OmPopup.qml
+        src/ui/qml/ui/OmMenu.qml
+        src/ui/qml/ui/OmMenuItem.qml
+        src/ui/qml/ui/OmMenuSeparator.qml
+        src/ui/qml/ui/OmKeycap.qml
+        src/ui/qml/ui/OmSettingRow.qml
+        src/ui/qml/ui/OmColorWell.qml
+        src/ui/qml/ui/OmEmptyState.qml
 )
 target_link_libraries(omareel_ui PUBLIC Qt6::Quick Qt6::QuickControls2)
 set_source_files_properties(
@@ -223,7 +232,12 @@ qt_add_resources(omareel_render "omareel_assets"
         assets/icons/lucide/circle.svg assets/icons/lucide/square-dashed.svg
         assets/icons/lucide/layers.svg
         assets/icons/lucide/keyboard.svg
+        assets/icons/lucide/eye.svg assets/icons/lucide/eye-off.svg assets/icons/lucide/trash-2.svg
+        assets/icons/lucide/video-off.svg assets/icons/lucide/volume-x.svg
+        assets/icons/lucide/sparkles.svg
         assets/icons/reel.svg
+        assets/fonts/Inter-Regular.ttf assets/fonts/Inter-Medium.ttf
+        assets/fonts/Inter-SemiBold.ttf assets/fonts/Inter-Bold.ttf
         assets/sounds/click.wav
 )
 target_include_directories(omareel_render PUBLIC src src/render)
