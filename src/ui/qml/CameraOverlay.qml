@@ -30,10 +30,14 @@ Item {
 
     readonly property real bubbleHeight: outputHeight * settings.size * zoomMultiplier
     readonly property real bubbleWidth: bubbleHeight * aspect
+    // The gap to the corner is a share of the shorter side, so it is the same at the side and the
+    // bottom, and it ends at the outside of the border.
+    readonly property real marginX: Math.min(outputWidth, outputHeight) * settings.offset.x + sourceBorderWidth
+    readonly property real marginY: Math.min(outputWidth, outputHeight) * settings.offset.y + sourceBorderWidth
     readonly property real bubbleX: settings.position.indexOf("left") >= 0
-        ? outputWidth * settings.offset.x : outputWidth * (1 - settings.offset.x) - bubbleWidth
+        ? marginX : outputWidth - marginX - bubbleWidth
     readonly property real bubbleY: settings.position.indexOf("top") >= 0
-        ? outputHeight * settings.offset.y : outputHeight * (1 - settings.offset.y) - bubbleHeight
+        ? marginY : outputHeight - marginY - bubbleHeight
     readonly property real bubbleRadius: settings.shape === "round" ? Math.min(bubbleWidth, bubbleHeight) / 2
         : settings.radius * ref
     // Fill covers the whole canvas; square keeps the largest centred square over a blurred copy.
@@ -44,6 +48,9 @@ Item {
     // rectangles instead of stretching into a stadium.
     readonly property real cornerRadius: bubbleRadius * (1 - fullProgress)
     readonly property real outerRadius: cornerRadius > 0 ? cornerRadius + borderWidth : 0
+    readonly property real shadowAngle: settings.shadow.angle * Math.PI / 180
+    readonly property real shadowX: Math.cos(shadowAngle) * settings.shadow.distance * ref
+    readonly property real shadowY: Math.sin(shadowAngle) * settings.shadow.distance * ref
 
     x: bubbleX + ((outputWidth - fullWidth) / 2 - bubbleX) * fullProgress
     y: bubbleY + ((outputHeight - fullHeight) / 2 - bubbleY) * fullProgress
@@ -101,12 +108,13 @@ Item {
         shadowColor: Qt.rgba(0, 0, 0, 1)
         shadowOpacity: root.settings.shadow.intensity * (1 - root.fullProgress)
         shadowBlur: Math.min(1, root.settings.shadow.blur / 64)
-        shadowVerticalOffset: root.settings.shadow.distance * root.ref
+        shadowHorizontalOffset: root.shadowX
+        shadowVerticalOffset: root.shadowY
         autoPaddingEnabled: true
     }
     Rectangle {
-        x: -root.borderWidth
-        y: -root.borderWidth + root.settings.shadow.distance * root.ref
+        x: -root.borderWidth + root.shadowX
+        y: -root.borderWidth + root.shadowY
         width: parent.width + 2 * root.borderWidth
         height: parent.height + 2 * root.borderWidth
         radius: shadowShape.radius

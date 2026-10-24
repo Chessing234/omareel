@@ -1096,9 +1096,9 @@ private slots:
                     enabled: true, position: "bottom-right", size: .25,
                     shape: "rectangle", radius: 16,
                     rotation: 90, flipHorizontal: true, scaleDuringZoom: .7,
-                    offset: {x: .02, y: .02},
-                    shadow: {enabled: false, intensity: .55, blur: 18, distance: 18},
-                    border: {enabled: false, width: 2, color: "white", alpha: .7}
+                    offset: {x: .035, y: .035},
+                    shadow: {enabled: false, intensity: .28, blur: 23, distance: 20, angle: 45},
+                    border: {enabled: false, width: 6, color: "white", alpha: .7}
                 })
                 zoomScale: 1
                 outputWidth: 1280; outputHeight: 720
@@ -1403,9 +1403,9 @@ private slots:
                         enabled: true, position: "bottom-right", size: .25,
                         shape: "round", radius: 16,
                         rotation: 0, flipHorizontal: false, scaleDuringZoom: .7,
-                        offset: {x: .02, y: .02}, fullFrame: "%1",
-                        shadow: {enabled: false, intensity: .55, blur: 18, distance: 18},
-                        border: {enabled: true, width: 2, color: "white", alpha: .7}
+                        offset: {x: .035, y: .035}, fullFrame: "%1",
+                        shadow: {enabled: true, intensity: .28, blur: 23, distance: 20, angle: 45},
+                        border: {enabled: true, width: 6, color: "white", alpha: .7}
                     })
                     zoomScale: 1
                     fullProgress: %2
@@ -1436,10 +1436,20 @@ private slots:
         auto *squareSource = square->findChild<QQuickItem *>(QStringLiteral("cameraFrameSource"));
         QCOMPARE(squareSource->property("cropRect").toRectF(), QRectF(0.21875, 0, 0.5625, 1));
 
-        // Halfway, the round bubble (180 px, 25.6 px from the corner) is halfway to the canvas,
-        // with half its corner radius, and fully opaque even though the bubble itself is hidden.
+        // At rest the round bubble (180 px) sits as far from the right as from the bottom: 3.5% of
+        // the 720 px side to the outside of its 4 px border.
+        const double gap = 720 * .035 + 6 * 720 / 1080.0;
+        const QRectF bubble(1280 - gap - 180, 720 - gap - 180, 180, 180);
+        auto rest = overlayAt(engine, QStringLiteral("fill"), 0);
+        QVERIFY(rest);
+        QCOMPARE(rect(rest.get()), bubble);
+        // The shadow falls at 45°, as far right as down.
+        QVERIFY(rest->property("shadowX").toDouble() > 0);
+        QVERIFY(qAbs(rest->property("shadowX").toDouble() - rest->property("shadowY").toDouble()) < 1e-6);
+
+        // Halfway, the bubble is halfway to the canvas, with half its corner radius, and fully
+        // opaque even though the bubble itself is hidden.
         auto half = overlayAt(engine, QStringLiteral("fill"), .5);
-        const QRectF bubble(1280 * .98 - 180, 720 * .98 - 180, 180, 180);
         const QRectF middle = rect(half.get());
         QVERIFY(qAbs(middle.x() - bubble.x() / 2) < 1e-6);
         QVERIFY(qAbs(middle.width() - (180 + 1280) / 2.0) < 1e-6);
