@@ -268,6 +268,11 @@ if(BUILD_TESTING)
     qt_add_executable(test_editor tests/test_editor.cpp)
     target_link_libraries(test_editor PRIVATE omareel_render Qt6::Test)
     add_test(NAME editor COMMAND test_editor)
+    # The capture exclusion plugin's own function hook, which only aarch64 uses.
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+        add_executable(test_arm64hook plugin/test_arm64hook.cpp)
+        add_test(NAME arm64hook COMMAND test_arm64hook)
+    endif()
 endif()
 
 install(TARGETS omareel RUNTIME DESTINATION bin)
