@@ -946,7 +946,7 @@ int Recorder::daemonMain(const QStringList &arguments)
                       {"countdown_end_us", countdownEndUs},
                       {"countdown_width", 240}, {"countdown_height", 240},
                       {"bar_visible", !options.noBar && !overlayMonitor.isEmpty()},
-                      {"bar_width", options.webcam ? 384 : 288}, {"bar_height", 40},
+                      {"bar_width", options.webcam ? 448 : 288}, {"bar_height", 40},
                       {"selfview", selfView.visible}, {"selfview_safe", selfView.safe},
                       {"selfview_monitor", selfView.monitor},
                       {"selfview_size", selfView.sizeName}, {"selfview_pixels", selfView.pixels},

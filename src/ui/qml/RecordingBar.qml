@@ -12,7 +12,7 @@ ApplicationWindow {
     objectName: "recordingBarWindow"
     visible: false
     // The window leaves room for the discard confirmation to unfold; the pill stays centred.
-    width: recordingBar.webcam ? 384 : 288
+    width: recordingBar.webcam ? 448 : 288
     height: 40
     font.family: theme.fontFamily
     font.pixelSize: theme.type.body
