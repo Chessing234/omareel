@@ -55,10 +55,10 @@ Item {
         width: Math.abs(selectionArea.currentX - selectionArea.originX)
         y: 1
         height: parent.height - 2
-        radius: theme.radius
-        color: Qt.alpha(theme.accent, .18)
+        radius: theme.controlRadius
+        color: Qt.alpha(theme.zoomAccent, .14)
         border.width: 1
-        border.color: theme.accent
+        border.color: Qt.alpha(theme.zoomAccent, .8)
         z: 100
     }
     Repeater {
@@ -83,12 +83,11 @@ Item {
             width: gestureActive ? gestureWidth : Math.max(18, (outputEnd-outputStart) * root.pixelsPerSecond)
             height: root.height
             y: 0
-            radius: theme.radius
-            color: Qt.alpha(theme.zoomAccent, .18)
-            border.width: 1
+            radius: theme.controlRadius
+            color: Qt.alpha(theme.zoomAccent, selected ? .30 : zoomHover.hovered ? .24 : .18)
+            border.width: selected ? 1.5 : 1
             border.color: selected ? theme.zoomAccent
-                        : zoomHover.hovered ? Qt.alpha(theme.zoomAccent, .80)
-                        : Qt.alpha(theme.zoomAccent, .60)
+                        : Qt.alpha(theme.zoomAccent, zoomHover.hovered ? .7 : .42)
             Behavior on color {
                 enabled: !editor.loading
                 ColorAnimation { duration: 120; easing.type: Easing.OutCubic }
@@ -101,7 +100,7 @@ Item {
             RowLayout {
                 id: zoomLabel
                 anchors.centerIn: parent
-                width: Math.max(0, parent.width - 20)
+                width: Math.max(0, parent.width - 36)
                 visible: zoomBlock.width >= 72
                 opacity: leftTrim.engaged || rightTrim.engaged ? .60 : 1
                 spacing: 5
@@ -110,22 +109,28 @@ Item {
                     NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
                 }
                 Item {
-                    Layout.preferredWidth: 12; Layout.preferredHeight: 12
+                    Layout.preferredWidth: 13; Layout.preferredHeight: 13
                     IconImage {
                         anchors.fill: parent
                         source: "qrc:/omareel/assets/icons/lucide/zoom-in.svg"
-                        sourceSize: Qt.size(12, 12)
-                        color: theme.foreground
+                        sourceSize: Qt.size(13, 13)
+                        color: theme.zoomAccent
                     }
+                }
+                Label {
+                    text: Number(modelData.level).toFixed(1) + "×"
+                    color: theme.textStrong
+                    font.family: theme.monoFamily
+                    font.pixelSize: theme.type.caption
+                    font.weight: Font.Medium
                 }
                 Label {
                     Layout.fillWidth: true
                     elide: Text.ElideRight
                     horizontalAlignment: Text.AlignLeft
-                    text: "Zoom " + Number(modelData.level).toFixed(1) + "× · " + (typeof modelData.target === "object" ? "Manual" : "Auto")
-                    color: theme.foreground
-                    font.pixelSize: theme.font.body
-                    font.weight: Font.Medium
+                    text: typeof modelData.target === "object" ? "Manual" : "Auto"
+                    color: theme.textMuted
+                    font.pixelSize: theme.type.small
                 }
             }
             MouseArea {

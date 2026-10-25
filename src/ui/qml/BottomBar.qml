@@ -1,11 +1,12 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.impl
 import QtQuick.Layouts
 import Omareel.Ui
 
 Rectangle {
     id: root
-    height: 56
+    height: 52
     color: theme.surface
     property real timelineScale: 1
     signal timelineScaleRequested(real value)
@@ -19,8 +20,8 @@ Rectangle {
         {text:"Tall 3:4", value:"3:4"}
     ]
     readonly property var shortcuts: [
-        {key:"Space", action:"Play / pause"}, {key:"← / →", action:"Step one frame"},
-        {key:"Shift ← / →", action:"Jump one second"}, {key:"S", action:"Split at playhead"},
+        {key:"Space", action:"Play / pause"}, {key:"← →", action:"Step one frame"},
+        {key:"Shift ← →", action:"Jump one second"}, {key:"S", action:"Split at playhead"},
         {key:"Z", action:"Add zoom"}, {key:"I", action:"Insert a video"},
         {key:"Delete", action:"Remove selection"},
         {key:"Backspace", action:"Remove range"},
@@ -44,6 +45,14 @@ Rectangle {
     function openShortcuts() { shortcutsSheet.open() }
     function openInsertDialog() { if (!editor.importing) insertDialog.open() }
     InsertClipDialog { id: insertDialog }
+    function formatTenths(seconds) {
+        const tenths = Math.max(0, Math.round(seconds * 10))
+        const minutes = Math.floor(tenths / 600)
+        const remainder = tenths % 600
+        const whole = Math.floor(remainder / 10)
+        return String(minutes).padStart(2, "0") + ":"
+             + String(whole).padStart(2, "0") + "." + (remainder % 10)
+    }
 
     Rectangle {
         anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
@@ -60,12 +69,12 @@ Rectangle {
             Layout.fillHeight: true
             RowLayout {
                 anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
-                spacing: 8
+                spacing: 6
                 EditorComboBox {
                     id: aspectBox
                     objectName: "aspectMenu"
                     visible: !root.narrow
-                    Layout.preferredWidth: root.compact ? 112 : 136
+                    Layout.preferredWidth: root.compact ? 104 : 138
                     Layout.minimumWidth: Layout.preferredWidth
                     leadingIconSource: "qrc:/omareel/assets/icons/lucide/square-dashed.svg"
                     model: root.aspects
@@ -76,20 +85,22 @@ Rectangle {
                     currentIndex: root.aspectIndex(editor.project.aspect)
                     onActivated: editor.setProjectValue("aspect", model[currentIndex].value)
                 }
-                EditorButton {
+                OmButton {
                     visible: !root.narrow
-                    Layout.preferredWidth: 76; Layout.minimumWidth: 76
-                    text: "Crop"
-                    icon.source: "qrc:/omareel/assets/icons/lucide/crop.svg"
+                    Layout.preferredWidth: implicitWidth
+                    text: root.cropMode ? "Done" : "Crop"
+                    icon.source: root.cropMode ? "qrc:/omareel/assets/icons/lucide/check.svg"
+                                               : "qrc:/omareel/assets/icons/lucide/crop.svg"
+                    icon.color: root.cropMode ? theme.accent : contentColor
                     checkable: true; checked: root.cropMode; selected: checked
+                    tooltipText: root.cropMode ? "" : "Crop the recording"
                     onToggled: root.cropMode = checked
                 }
                 OmIconButton {
                     id: overflowButton
                     visible: root.narrow
                     width: 32; height: 32
-                    text: "…"
-                    bordered: true
+                    icon.source: "qrc:/omareel/assets/icons/lucide/square-dashed.svg"
                     tooltipText: "Canvas options"
                     Accessible.name: "Canvas options"
                     onClicked: overflowMenu.visible ? overflowMenu.close() : overflowMenu.open()
@@ -98,122 +109,162 @@ Rectangle {
         }
 
         RowLayout {
-            Layout.minimumWidth: 228; Layout.preferredWidth: 228; Layout.maximumWidth: 228
             Layout.alignment: Qt.AlignHCenter
-            spacing: 10
-            IconToolButton {
+            spacing: 4
+            Label {
+                Layout.preferredWidth: positionMetrics.advanceWidth
+                horizontalAlignment: Text.AlignRight
+                Layout.rightMargin: 8
+                text: root.formatTenths(editor.position)
+                color: theme.textStrong
+                font.family: theme.monoFamily
+                font.pixelSize: theme.type.small
+                font.weight: Font.Medium
+                TextMetrics { id: positionMetrics; font.family: theme.monoFamily; font.pixelSize: theme.type.small; text: "00:00.0" }
+            }
+            OmIconButton {
                 icon.source: "qrc:/omareel/assets/icons/lucide/skip-back.svg"
-                icon.width: 19; icon.height: 19
                 Accessible.name: "Go to start"
+                tooltipText: "Go to start"
                 onClicked: editor.seekBoundary(-1)
             }
-            OmButton {
-                Layout.preferredWidth: 40; Layout.preferredHeight: 40
-                width: 40; height: 40
-                leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0
-                bordered: true; active: true
-                icon.source: editor.playing
-                    ? "qrc:/omareel/assets/icons/lucide/pause.svg"
-                    : "qrc:/omareel/assets/icons/lucide/play.svg"
-                icon.width: 20; icon.height: 20; icon.color: theme.foreground
+            Button {
+                id: playButton
+                Layout.preferredWidth: 36; Layout.preferredHeight: 36
+                Layout.leftMargin: 2; Layout.rightMargin: 2
+                hoverEnabled: true
+                focusPolicy: Qt.NoFocus
                 Accessible.name: editor.playing ? "Pause" : "Play"
                 onClicked: editor.playPause()
+                scale: down ? .92 : 1
+                Behavior on scale { NumberAnimation { duration: down ? 70 : 260; easing.type: Easing.OutBack; easing.overshoot: 2.4 } }
+                background: Rectangle {
+                    radius: theme.rounded ? width / 2 : 0
+                    color: playButton.hovered ? Qt.lighter(theme.textStrong, 1.08) : theme.textStrong
+                    Behavior on color { ColorAnimation { duration: 140 } }
+                }
+                contentItem: Item {
+                    IconImage {
+                        anchors.centerIn: parent
+                        anchors.horizontalCenterOffset: editor.playing ? 0 : 1
+                        width: 16; height: 16
+                        source: editor.playing ? "qrc:/omareel/assets/icons/lucide/pause.svg"
+                                               : "qrc:/omareel/assets/icons/lucide/play.svg"
+                        sourceSize: Qt.size(16, 16)
+                        color: theme.surface
+                    }
+                }
+                OmToolTip { target: playButton; visible: playButton.hovered; text: editor.playing ? "Pause" : "Play"; shortcut: "Space" }
             }
-            IconToolButton {
+            OmIconButton {
                 icon.source: "qrc:/omareel/assets/icons/lucide/skip-forward.svg"
-                icon.width: 19; icon.height: 19
                 Accessible.name: "Go to end"
+                tooltipText: "Go to end"
                 onClicked: editor.seekBoundary(1)
             }
-            IconToolButton {
-                icon.source: "qrc:/omareel/assets/icons/lucide/scissors.svg"
-                icon.width: 19; icon.height: 19
-                Accessible.name: "Split clip"
-                ToolTip.visible: hovered
-                ToolTip.text: "Split at playhead (S)"
-                onClicked: editor.splitAtPlayhead()
-            }
-            IconToolButton {
-                objectName: "insertClipToolButton"
-                icon.source: "qrc:/omareel/assets/icons/lucide/film.svg"
-                icon.width: 19; icon.height: 19
-                enabled: !editor.importing
-                Accessible.name: "Insert video"
-                ToolTip.visible: hovered
-                ToolTip.text: "Insert a video at the playhead (I)"
-                onClicked: root.openInsertDialog()
+            Label {
+                Layout.preferredWidth: positionMetrics.advanceWidth
+                Layout.leftMargin: 8
+                text: root.formatTenths(editor.duration)
+                color: theme.textFaint
+                font.family: theme.monoFamily
+                font.pixelSize: theme.type.small
             }
         }
 
         Item {
             Layout.fillWidth: true
-            Layout.minimumWidth: root.compact ? 174 : 270
+            Layout.minimumWidth: root.compact ? 232 : 372
             Layout.fillHeight: true
             RowLayout {
                 anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
-                spacing: 7
-                Label {
-                    visible: !root.compact
-                    text: "Timeline"
-                    color: theme.textMuted
-                    font.pixelSize: theme.font.caption
+                spacing: 4
+                OmButton {
+                    objectName: "insertClipToolButton"
+                    Layout.preferredWidth: root.compact ? 32 : implicitWidth
+                    text: root.compact ? "" : "Insert"
+                    icon.source: "qrc:/omareel/assets/icons/lucide/film.svg"
+                    enabled: !editor.importing
+                    Accessible.name: "Insert video"
+                    tooltipText: "Insert a video at the playhead"
+                    tooltipShortcut: "I"
+                    onClicked: root.openInsertDialog()
                 }
-                IconToolButton {
+                OmButton {
+                    Layout.preferredWidth: root.compact ? 32 : implicitWidth
+                    text: root.compact ? "" : "Split"
+                    icon.source: "qrc:/omareel/assets/icons/lucide/scissors.svg"
+                    Accessible.name: "Split clip"
+                    tooltipText: "Split at playhead"
+                    tooltipShortcut: "S"
+                    onClicked: editor.splitAtPlayhead()
+                }
+                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 18; Layout.leftMargin: 6; Layout.rightMargin: 6; color: theme.separator }
+                OmIconButton {
                     objectName: "timelineZoomOut"
-                    Layout.preferredWidth: 20; Layout.preferredHeight: 20
-                    width: 20; height: 20
+                    Layout.preferredWidth: 26; Layout.preferredHeight: 26
+                    width: 26; height: 26
                     icon.source: "qrc:/omareel/assets/icons/lucide/zoom-out.svg"
-                    icon.width: 16; icon.height: 16
+                    icon.width: 15; icon.height: 15
                     Accessible.name: "Zoom timeline out"
                     onClicked: root.timelineScaleRequested(Math.max(1, root.timelineScale / 1.25))
                 }
                 EditorSlider {
                     objectName: "timelineZoomSlider"
                     from: 1; to: 16; value: root.timelineScale
-                    Layout.preferredWidth: root.compact ? 82 : 104
+                    Layout.preferredWidth: root.compact ? 76 : 96
                     Layout.minimumWidth: Layout.preferredWidth
-                    Layout.preferredHeight: 28
                     onMoved: root.timelineScaleRequested(value)
                     Accessible.name: "Timeline zoom"
                 }
-                IconToolButton {
+                OmIconButton {
                     objectName: "timelineZoomIn"
-                    Layout.preferredWidth: 20; Layout.preferredHeight: 20
-                    width: 20; height: 20
+                    Layout.preferredWidth: 26; Layout.preferredHeight: 26
+                    width: 26; height: 26
                     icon.source: "qrc:/omareel/assets/icons/lucide/zoom-in.svg"
-                    icon.width: 16; icon.height: 16
+                    icon.width: 15; icon.height: 15
                     Accessible.name: "Zoom timeline in"
                     onClicked: root.timelineScaleRequested(Math.min(16, root.timelineScale * 1.25))
                 }
-                OmIconButton {
-                    width: 28; height: 28
-                    text: "?"
-                    bordered: false
-                    tooltipText: "Keyboard shortcuts"
+                Button {
+                    id: shortcutsButton
+                    Layout.leftMargin: 6
+                    Layout.preferredWidth: 28; Layout.preferredHeight: 28
+                    hoverEnabled: true
+                    focusPolicy: Qt.NoFocus
                     Accessible.name: "Keyboard shortcuts"
                     onClicked: shortcutsSheet.visible ? shortcutsSheet.close() : shortcutsSheet.open()
+                    background: Item {}
+                    contentItem: Item {
+                        OmKeycap {
+                            anchors.centerIn: parent
+                            text: "?"
+                            subtle: !shortcutsButton.hovered && !shortcutsSheet.visible
+                            scale: shortcutsButton.down ? .92 : 1
+                            Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutBack } }
+                        }
+                    }
+                    OmToolTip { target: shortcutsButton; visible: shortcutsButton.hovered && !shortcutsSheet.visible; text: "Keyboard shortcuts" }
                 }
             }
         }
     }
 
-    Popup {
+    OmPopup {
         id: overflowMenu
         parent: root
+        fromBelow: false
         x: 12; y: -height - 8
         width: 224
-        padding: 10
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        background: OmPopupCard { padding: 0 }
+        padding: 8
         contentItem: ColumnLayout {
-            spacing: 4
-            PanelHeading { text: "Canvas"; Layout.bottomMargin: 4 }
+            spacing: 2
+            PanelHeading { text: "Canvas"; Layout.leftMargin: 8; Layout.topMargin: 4; Layout.bottomMargin: 4 }
             Repeater {
                 model: root.aspects
                 delegate: OmButton {
                     required property var modelData
                     Layout.fillWidth: true
-                    bordered: false
                     selected: editor.project.aspect === modelData.value
                     text: modelData.text
                     onClicked: {
@@ -234,28 +285,29 @@ Rectangle {
         }
     }
 
-    Popup {
+    OmPopup {
         id: shortcutsSheet
         objectName: "shortcutsSheet"
         parent: root
+        fromBelow: false
         x: Math.max(12, root.width - width - 12)
         y: -height - 8
-        width: Math.min(620, root.width - 24)
-        padding: 18
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        background: OmPopupCard { padding: 0 }
+        width: Math.min(560, root.width - 24)
+        padding: 20
         contentItem: ColumnLayout {
-            spacing: 14
+            spacing: 16
             RowLayout {
                 Layout.fillWidth: true
                 Label {
                     text: "Keyboard shortcuts"
-                    color: theme.foreground
-                    font.pixelSize: theme.font.title
+                    color: theme.textStrong
+                    font.pixelSize: theme.type.title
                     font.weight: Font.DemiBold
                 }
                 Item { Layout.fillWidth: true }
                 OmIconButton {
+                    width: 24; height: 24
+                    icon.width: 14; icon.height: 14
                     icon.source: "qrc:/omareel/assets/icons/lucide/x.svg"
                     Accessible.name: "Close shortcuts"
                     onClicked: shortcutsSheet.close()
@@ -264,33 +316,26 @@ Rectangle {
             GridLayout {
                 Layout.fillWidth: true
                 columns: 2
-                columnSpacing: 24; rowSpacing: 8
+                columnSpacing: 28; rowSpacing: 10
                 Repeater {
                     model: root.shortcuts
                     delegate: RowLayout {
                         required property var modelData
                         Layout.fillWidth: true
+                        Layout.preferredWidth: 1
                         spacing: 8
                         Label {
                             Layout.fillWidth: true
                             text: modelData.action
-                            color: theme.textMuted
-                            font.pixelSize: theme.font.bodySmall
+                            color: theme.foreground
+                            font.pixelSize: theme.type.body
+                            elide: Text.ElideRight
                         }
-                        Rectangle {
-                            Layout.preferredWidth: shortcutKey.implicitWidth + 12
-                            Layout.preferredHeight: 24
-                            radius: Math.min(4, theme.radius)
-                            color: theme.normalFill
-                            border.width: 1; border.color: theme.normalBorder
-                            Label {
-                                id: shortcutKey
-                                anchors.centerIn: parent
-                                text: modelData.key
-                                color: theme.foreground
-                                font.family: theme.monoFamily
-                                font.pixelSize: theme.font.caption
-                                font.weight: Font.DemiBold
+                        Row {
+                            spacing: 3
+                            Repeater {
+                                model: modelData.key.split(" ")
+                                delegate: OmKeycap { required property string modelData; text: modelData }
                             }
                         }
                     }

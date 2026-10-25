@@ -132,7 +132,9 @@ try:
     # Only the window created by this harness is changed in the parent compositor.
     run('hyprctl', 'eval', f"hl.dispatch(hl.dsp.window.float({{action='enable',window='{selector}'}}))", env=outer)
     run('hyprctl', 'eval', f"hl.dispatch(hl.dsp.window.resize({{x=1600,y=900,window='{selector}'}}))", env=outer)
-    monitor = next(m for m in json.loads(run('hyprctl', '-j', 'monitors', env=outer)) if m['name'] == 'DP-3')
+    # DP-3 on the machine the proofs were written on, otherwise the first monitor.
+    monitors = json.loads(run('hyprctl', '-j', 'monitors', env=outer))
+    monitor = next((m for m in monitors if m['name'] == 'DP-3'), monitors[0])
     run('hyprctl', 'eval', f"hl.dispatch(hl.dsp.window.move({{x={monitor['x']+100},y={monitor['y']+150},window='{selector}'}}))", env=outer)
     for prop in ('opacity', 'opacity_inactive', 'opacity_override', 'opacity_inactive_override'):
         run('hyprctl', 'eval', f"hl.dispatch(hl.dsp.window.set_prop({{prop='{prop}',value='1',window='{selector}'}}))", env=outer)

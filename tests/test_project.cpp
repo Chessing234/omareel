@@ -49,10 +49,17 @@ private slots:
         QCOMPARE(original.camera.radius, 16.0);
         QCOMPARE(original.camera.flipHorizontal, false);
         QCOMPARE(original.camera.rotation, 0);
-        QCOMPARE(original.camera.shadow.enabled, false);
-        QCOMPARE(original.camera.border.enabled, false);
+        QCOMPARE(original.camera.shadow.enabled, true);
+        QCOMPARE(original.camera.shadow.intensity, 0.28);
+        QCOMPARE(original.camera.shadow.blur, 23.0);
+        QCOMPARE(original.camera.shadow.distance, 20.0);
+        QCOMPARE(original.camera.shadow.angle, 45.0);
+        QCOMPARE(original.camera.border.enabled, true);
+        QCOMPARE(original.camera.border.width, 6.0);
+        QCOMPARE(original.camera.border.color, QColor(Qt::white));
+        QCOMPARE(original.camera.border.alpha, 0.7);
         QCOMPARE(original.camera.scaleDuringZoom, 0.7);
-        QCOMPARE(original.camera.offset, QPointF(0.02, 0.02));
+        QCOMPARE(original.camera.offset, QPointF(0.035, 0.035));
         QVERIFY(allowedAspects().contains(QStringLiteral("3:4")));
         QCOMPARE(allowedClipSpeeds().last(), 24.0);
         QTemporaryDir directory;
@@ -239,6 +246,57 @@ private slots:
         QVERIFY(toggled.frame.border.enabled);
         QCOMPARE(toggled.frame.border.width, 0.0);
         QCOMPARE(toggled.frame.border.alpha, 0.5);
+    }
+
+    void migratesOnlyUntouchedOldCameraDefaults()
+    {
+        const auto load = [](const QJsonObject &shadow, const QJsonObject &border, const QJsonObject &offset) {
+            return Project::fromJson(QJsonObject{
+                {QStringLiteral("defaultsVersion"), 3},
+                {QStringLiteral("camera"), QJsonObject{{QStringLiteral("shadow"), shadow},
+                    {QStringLiteral("border"), border}, {QStringLiteral("offset"), offset}}}});
+        };
+        const QJsonObject oldOffset{{QStringLiteral("x"), 0.02}, {QStringLiteral("y"), 0.02}};
+
+        const Project untouched = load(
+            QJsonObject{{QStringLiteral("enabled"), false}, {QStringLiteral("intensity"), 0.55},
+                        {QStringLiteral("blur"), 18}, {QStringLiteral("distance"), 18}},
+            QJsonObject{{QStringLiteral("enabled"), false}, {QStringLiteral("width"), 2},
+                        {QStringLiteral("color"), QStringLiteral("#ffffff")}, {QStringLiteral("alpha"), 0.7}},
+            oldOffset);
+        QCOMPARE(untouched.defaultsVersion, Project::CurrentDefaultsVersion);
+        // The values move to the new defaults, but a switched-off shadow or border stays off.
+        QVERIFY(!untouched.camera.shadow.enabled);
+        QCOMPARE(untouched.camera.shadow.intensity, 0.28);
+        QCOMPARE(untouched.camera.shadow.blur, 23.0);
+        QCOMPARE(untouched.camera.shadow.distance, 20.0);
+        QCOMPARE(untouched.camera.shadow.angle, 45.0);
+        QVERIFY(!untouched.camera.border.enabled);
+        QCOMPARE(untouched.camera.border.width, 6.0);
+        QCOMPARE(untouched.camera.offset, QPointF(0.035, 0.035));
+
+        const Project customised = load(
+            QJsonObject{{QStringLiteral("enabled"), true}, {QStringLiteral("intensity"), 0.4},
+                        {QStringLiteral("blur"), 18}, {QStringLiteral("distance"), 18}},
+            QJsonObject{{QStringLiteral("enabled"), true}, {QStringLiteral("width"), 4},
+                        {QStringLiteral("color"), QStringLiteral("#ffffff")}, {QStringLiteral("alpha"), 0.7}},
+            QJsonObject{{QStringLiteral("x"), 0.05}, {QStringLiteral("y"), 0.02}});
+        QVERIFY(customised.camera.shadow.enabled);
+        QCOMPARE(customised.camera.shadow.intensity, 0.4);
+        QCOMPARE(customised.camera.shadow.distance, 18.0);
+        QVERIFY(customised.camera.border.enabled);
+        QCOMPARE(customised.camera.border.width, 4.0);
+        QCOMPARE(customised.camera.offset, QPointF(0.05, 0.02));
+
+        // A current project keeps a width of 2 that was chosen on purpose.
+        const Project current = Project::fromJson(QJsonObject{
+            {QStringLiteral("defaultsVersion"), Project::CurrentDefaultsVersion},
+            {QStringLiteral("camera"), QJsonObject{{QStringLiteral("border"), QJsonObject{
+                {QStringLiteral("enabled"), true}, {QStringLiteral("width"), 2}}},
+                {QStringLiteral("offset"), oldOffset}}}});
+        QCOMPARE(current.camera.border.width, 2.0);
+        QCOMPARE(current.camera.offset, QPointF(0.02, 0.02));
+        QCOMPARE(Project::fromJson(current.toJson()).camera.shadow.angle, 45.0);
     }
 
     void cameraCropFoldsIntoShape_data()

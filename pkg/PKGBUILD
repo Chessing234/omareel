@@ -51,6 +51,7 @@ package() {
   fi
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 LICENSES/lucide.txt "$pkgdir/usr/share/licenses/$pkgname/lucide.txt"
+  install -Dm644 LICENSES/inter.txt "$pkgdir/usr/share/licenses/$pkgname/inter.txt"
   install -Dm644 "$startdir/omareel.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/omareel.svg"
   local size
   for size in 16 32 48 64 128 256 512; do

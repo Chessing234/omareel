@@ -68,6 +68,20 @@ Two necessary implementation details differ from the initial design:
   clipping, UV state, and nearest-neighbour state are restored by a scope guard.
   Damage, final damage, and the render pass are not modified.
 
+Hyprland's `CFunctionHook` only patches x86-64 code; on any other architecture
+`hook()` returns false (`src/plugins/HookSystem.cpp:147`). On aarch64 the plugin
+hooks the same two functions itself with `Arm64Hook.hpp`: the first instruction
+becomes a branch to a page within branch range, which jumps on to the hook and
+holds a trampoline that runs the moved instruction and continues in the
+original. PC-relative instructions are refused rather than relocated. A `bti c`
+or `paciasp` landing pad stays where it is and the instruction after it moves;
+for `paciasp` the return address is authenticated before the hook and signed
+again for the original, and a BTI-guarded page stays guarded. In Omarchy's
+aarch64 0.56.2 build both functions start with `stp x29, x30, [sp, #-N]!`.
+`test_arm64hook` runs under ctest on aarch64. From x86-64 it can be built with
+clang against an Arch Linux ARM sysroot and run with `qemu-aarch64-static -cpu max`,
+which enforces BTI and PAC.
+
 Initialization rejects a different running commit or anything other than one
 symbol match for each hook. Partial installation rolls back; exit unhooks both
 functions. Monitor/layer lists are traversed through weak pointers and visibility
@@ -108,7 +122,8 @@ Other proof modes are `hygiene` (forces MRT), `overlays`, `fallback`,
 `stability` (200 separate screencopy sessions), and `recorder-cycles` (200 full
 record/stop operations; use `--timeout 300`). Pixel checks
 need grim, ffmpeg, Python, Pillow, and NumPy. The display proof positions only the
-harness's own outer window on DP-3 and makes that window opaque. Hidden
+harness's own outer window on DP-3 (or the first monitor when there is no DP-3)
+and makes that window opaque. Hidden
 `__layer-test` and `__window-test` clients exit within 60 seconds. Reports,
 command logs, recordings, and all extracted frames remain in the supplied
 artifact directory.

@@ -97,7 +97,9 @@ static ResolvedFonts resolveFonts()
         family = QString::fromUtf8(match.readAllStandardOutput()).trimmed();
     if (family.isEmpty()) family = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
     qInfo().noquote() << "omareel: fontconfig monospace ->" << family;
-    return {family, family};
+    QString ui = Theme::bundledUiFamily();
+    if (ui.isEmpty()) ui = QFontDatabase::systemFont(QFontDatabase::GeneralFont).family();
+    return {ui, family};
 }
 
 static int shellFontBaseSize()
@@ -573,7 +575,7 @@ int main(int argc, char **argv)
     app.setApplicationVersion(QStringLiteral(OMAREEL_VERSION));
     const ResolvedFonts resolvedFonts = resolveFonts();
     QFont applicationFont(resolvedFonts.ui);
-    applicationFont.setPixelSize(shellFontBaseSize());
+    applicationFont.setPixelSize(qRound(shellFontBaseSize() * 1.083));
     QGuiApplication::setFont(applicationFont);
     Theme::setFontFamilies(resolvedFonts.ui, resolvedFonts.mono);
     if (graphical)

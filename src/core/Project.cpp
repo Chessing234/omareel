@@ -132,6 +132,33 @@ QJsonObject Project::migrateDefaults(const QJsonObject &json, bool *changed)
         camera.remove(QStringLiteral("crop"));
         migrated.insert(QStringLiteral("camera"), camera);
     }
+    // Version 4 gives the camera a softer, wider shadow and border and measures its corner gap
+    // from the shorter side. Like version 2 it only replaces values nobody changed, and leaves
+    // the shadow and border switched on or off as they were.
+    if (storedVersion < 4 && migrated.value(QStringLiteral("camera")).isObject()) {
+        QJsonObject camera = migrated.value(QStringLiteral("camera")).toObject();
+        const Camera defaults;
+        QJsonObject shadow = camera.value(QStringLiteral("shadow")).toObject();
+        if (qFuzzyCompare(shadow.value(QStringLiteral("intensity")).toDouble(), 0.55)
+            && qFuzzyCompare(shadow.value(QStringLiteral("blur")).toDouble(), 18.0)
+            && qFuzzyCompare(shadow.value(QStringLiteral("distance")).toDouble(), 18.0)) {
+            shadow.insert(QStringLiteral("intensity"), defaults.shadow.intensity);
+            shadow.insert(QStringLiteral("blur"), defaults.shadow.blur);
+            shadow.insert(QStringLiteral("distance"), defaults.shadow.distance);
+            camera.insert(QStringLiteral("shadow"), shadow);
+        }
+        QJsonObject border = camera.value(QStringLiteral("border")).toObject();
+        if (qFuzzyCompare(border.value(QStringLiteral("width")).toDouble(), 2.0)) {
+            border.insert(QStringLiteral("width"), defaults.border.width);
+            camera.insert(QStringLiteral("border"), border);
+        }
+        const QJsonObject offset = camera.value(QStringLiteral("offset")).toObject();
+        if (qFuzzyCompare(offset.value(QStringLiteral("x")).toDouble(), 0.02)
+            && qFuzzyCompare(offset.value(QStringLiteral("y")).toDouble(), 0.02))
+            camera.insert(QStringLiteral("offset"), QJsonObject{
+                {QStringLiteral("x"), defaults.offset.x()}, {QStringLiteral("y"), defaults.offset.y()}});
+        migrated.insert(QStringLiteral("camera"), camera);
+    }
     if (didChange) migrated.insert(QStringLiteral("defaultsVersion"), CurrentDefaultsVersion);
     if (changed) *changed = didChange;
     return migrated;
@@ -275,23 +302,24 @@ Project Project::fromJson(const QJsonObject &root)
     const QJsonValue cameraShadowValue = camera.value("shadow");
     if (cameraShadowValue.isObject()) {
         const QJsonObject cameraShadow = cameraShadowValue.toObject();
-        p.camera.shadow.enabled = cameraShadow.value("enabled").toBool(false);
-        p.camera.shadow.intensity = cameraShadow.value("intensity").toDouble(0.55);
-        p.camera.shadow.blur = cameraShadow.value("blur").toDouble(18.0);
-        p.camera.shadow.distance = cameraShadow.value("distance").toDouble(18.0);
+        p.camera.shadow.enabled = cameraShadow.value("enabled").toBool(p.camera.shadow.enabled);
+        p.camera.shadow.intensity = cameraShadow.value("intensity").toDouble(p.camera.shadow.intensity);
+        p.camera.shadow.blur = cameraShadow.value("blur").toDouble(p.camera.shadow.blur);
+        p.camera.shadow.distance = cameraShadow.value("distance").toDouble(p.camera.shadow.distance);
+        p.camera.shadow.angle = cameraShadow.value("angle").toDouble(p.camera.shadow.angle);
     } else {
-        p.camera.shadow.enabled = cameraShadowValue.toBool(false);
+        p.camera.shadow.enabled = cameraShadowValue.toBool(p.camera.shadow.enabled);
     }
     const QJsonObject cameraBorder = (camera.contains("border")
         ? camera.value("border") : camera.value("inset")).toObject();
-    p.camera.border.enabled = cameraBorder.value("enabled").toBool(false);
-    p.camera.border.width = cameraBorder.value("width").toDouble(2.0);
-    p.camera.border.color = parseColor(cameraBorder.value("color"), Qt::white);
-    p.camera.border.alpha = cameraBorder.value("alpha").toDouble(0.7);
+    p.camera.border.enabled = cameraBorder.value("enabled").toBool(p.camera.border.enabled);
+    p.camera.border.width = cameraBorder.value("width").toDouble(p.camera.border.width);
+    p.camera.border.color = parseColor(cameraBorder.value("color"), p.camera.border.color);
+    p.camera.border.alpha = cameraBorder.value("alpha").toDouble(p.camera.border.alpha);
     p.camera.scaleDuringZoom = camera.value("scaleDuringZoom").toDouble(0.7);
     const auto cameraOffset = camera.value("offset").toObject();
-    p.camera.offset = QPointF(cameraOffset.value("x").toDouble(0.02),
-                              cameraOffset.value("y").toDouble(0.02));
+    p.camera.offset = QPointF(cameraOffset.value("x").toDouble(p.camera.offset.x()),
+                              cameraOffset.value("y").toDouble(p.camera.offset.y()));
     if (camera.value("fullFrame").toString() == QLatin1String("square"))
         p.camera.fullFrame = QStringLiteral("square");
     const auto e = source.value("export").toObject();
@@ -361,7 +389,7 @@ QJsonObject Project::toJson() const
             {"rotation", camera.rotation},
             {"shadow", QJsonObject{{"enabled", camera.shadow.enabled},
                 {"intensity", camera.shadow.intensity}, {"blur", camera.shadow.blur},
-                {"distance", camera.shadow.distance}}},
+                {"distance", camera.shadow.distance}, {"angle", camera.shadow.angle}}},
             {"border", QJsonObject{{"enabled", camera.border.enabled},
                 {"width", camera.border.width}, {"color", camera.border.color.name(QColor::HexRgb)},
                 {"alpha", camera.border.alpha}}},

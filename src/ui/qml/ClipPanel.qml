@@ -23,18 +23,16 @@ ColumnLayout {
             if (editor.clips[i].kind !== "media") ++count
         return count
     }
-    Label {
+    OmEmptyState {
         visible: root.selected === null
-        Layout.fillWidth: true
-        text: "Select a clip on the timeline"
-        color: theme.textMuted
-        font.pixelSize: theme.font.bodySmall
-        wrapMode: Text.WordWrap
+        iconSource: "qrc:/omareel/assets/icons/lucide/film.svg"
+        title: "No clip selected"
+        hint: "Click a clip on the timeline to trim it or change its speed. Press S to split at the playhead."
     }
     ColumnLayout {
         visible: root.selected !== null
         Layout.fillWidth: true
-        spacing: 10
+        spacing: theme.space.panelGap
         PanelLabel { visible: editor.hasCamera && !root.insert; text: "Layout" }
         OmButtonGroup {
             objectName: "clipLayoutGroup"
@@ -54,11 +52,10 @@ ColumnLayout {
                 : editor.project.camera.enabled ? "The screen with the camera bubble."
                 : "The screen alone: the camera bubble is off in Camera."
             color: theme.textMuted
-            font.pixelSize: theme.font.bodySmall
+            font.pixelSize: theme.type.small
             wrapMode: Text.WordWrap
         }
 
-        PanelLabel { visible: root.insert; text: "Inserted video" }
         Label {
             visible: root.insert
             Layout.fillWidth: true
@@ -66,18 +63,21 @@ ColumnLayout {
                 : root.selected.missing ? root.selected.mediaName + " is missing from the recording."
                 : root.selected.mediaName
             color: root.insert && root.selected.missing ? theme.record : theme.foreground
-            font.pixelSize: theme.font.body
+            font.pixelSize: theme.type.body
+            font.weight: Font.Medium
             elide: Text.ElideMiddle
         }
-        PanelLabel { visible: root.insert; text: "Fit" }
-        OmButtonGroup {
-            objectName: "clipFitGroup"
+        OmSettingRow {
             visible: root.insert
-            Layout.fillWidth: true
-            options: [{value:"fit", label:"Fit"}, {value:"fill", label:"Fill"},
-                {value:"framed", label:"Framed"}]
-            value: root.insert ? root.selected.fit : "fit"
-            onChanged: value => editor.setClipFit(editor.selectedClipId, value)
+            label: "Fit"
+            OmButtonGroup {
+                objectName: "clipFitGroup"
+                Layout.preferredWidth: 176
+                options: [{value:"fit", label:"Fit"}, {value:"fill", label:"Fill"},
+                    {value:"framed", label:"Framed"}]
+                value: root.insert ? root.selected.fit : "fit"
+                onChanged: value => editor.setClipFit(editor.selectedClipId, value)
+            }
         }
         Label {
             visible: root.insert
@@ -87,13 +87,13 @@ ColumnLayout {
                 : root.selected.fit === "framed" ? "Sits in the frame over the background, like the screen."
                 : "Shows the whole video over a blurred copy of itself."
             color: theme.textMuted
-            font.pixelSize: theme.font.bodySmall
+            font.pixelSize: theme.type.small
             wrapMode: Text.WordWrap
         }
         RowLayout {
             visible: root.insert
             Layout.fillWidth: true
-            spacing: theme.space.md
+            spacing: 8
             EditorButton {
                 Layout.fillWidth: true
                 text: "Move earlier"
@@ -107,31 +107,42 @@ ColumnLayout {
                 onClicked: editor.reorderClip(editor.selectedClipId, 1)
             }
         }
+        OmSeparator { Layout.fillWidth: true; visible: root.insert || editor.hasCamera }
 
-        PanelLabel { text: "Speed" }
-        EditorComboBox {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 32
-            model: [0.5, 0.75, 1, 1.2, 1.4, 1.6, 1.8, 2, 3, 4, 8, 16, 24]
-            currentIndex: root.selected ? model.indexOf(root.selected.speed) : -1
-            textRole: ""
-            displayText: currentIndex >= 0 ? model[currentIndex] + "×" : ""
-            onActivated: editor.setClipSpeed(editor.selectedClipId, model[currentIndex])
+        OmSettingRow {
+            label: "Speed"
+            description: root.selected && root.selected.speed !== 1 ? "Plays " + root.selected.speed + "× as fast" : "Original speed"
+            EditorComboBox {
+                Layout.preferredWidth: 96
+                font.family: theme.monoFamily
+                model: [0.5, 0.75, 1, 1.2, 1.4, 1.6, 1.8, 2, 3, 4, 8, 16, 24]
+                currentIndex: root.selected ? model.indexOf(root.selected.speed) : -1
+                textRole: ""
+                displayText: currentIndex >= 0 ? model[currentIndex] + "×" : ""
+                onActivated: editor.setClipSpeed(editor.selectedClipId, model[currentIndex])
+            }
         }
-        EditorButton { Layout.fillWidth: true; text: "Remove trims"; onClicked: editor.resetClipTrims(editor.selectedClipId) }
-        EditorButton {
+        OmSeparator { Layout.fillWidth: true }
+        RowLayout {
             Layout.fillWidth: true
-            text: "Delete clip"
-            destructive: true
-            // The recording always keeps one clip.
-            enabled: editor.clips.length > 1 && (root.insert || root.recordingClips > 1)
-            onClicked: editor.removeClip(editor.selectedClipId)
+            spacing: 8
+            EditorButton { Layout.fillWidth: true; text: "Reset trims"; icon.source: "qrc:/omareel/assets/icons/lucide/undo-2.svg"; onClicked: editor.resetClipTrims(editor.selectedClipId) }
+            EditorButton {
+                Layout.fillWidth: true
+                text: "Delete clip"
+                icon.source: "qrc:/omareel/assets/icons/lucide/trash-2.svg"
+                destructive: true
+                // The recording always keeps one clip.
+                enabled: editor.clips.length > 1 && (root.insert || root.recordingClips > 1)
+                onClicked: editor.removeClip(editor.selectedClipId)
+            }
         }
     }
-    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.separator }
+    OmSeparator { Layout.fillWidth: true; Layout.topMargin: 2 }
     EditorButton {
         objectName: "insertClipButton"
         Layout.fillWidth: true
+        icon.source: "qrc:/omareel/assets/icons/lucide/plus.svg"
         text: editor.importing ? "Adding clip…" : "Insert video at playhead…"
         enabled: !editor.importing
         onClicked: insertDialog.open()
@@ -140,7 +151,7 @@ ColumnLayout {
         Layout.fillWidth: true
         text: "Add a demo or a retake between clips. It is copied into the recording, splitting the clip at the playhead."
         color: theme.textMuted
-        font.pixelSize: theme.font.bodySmall
+        font.pixelSize: theme.type.small
         wrapMode: Text.WordWrap
     }
     InsertClipDialog { id: insertDialog }

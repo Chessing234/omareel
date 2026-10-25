@@ -47,13 +47,29 @@ class Theme : public QObject
     THEME_COLOR(menuScrim, menuScrim)
     THEME_COLOR(menuSelectedBackground, menuSelectedBackground)
     THEME_COLOR(menuSelectedText, menuSelectedText)
+    THEME_COLOR(canvas, canvas)
+    THEME_COLOR(card, card)
+    THEME_COLOR(raised, raised)
+    THEME_COLOR(stroke, stroke)
+    THEME_COLOR(strokeStrong, strokeStrong)
+    THEME_COLOR(fill, fill)
+    THEME_COLOR(fillHover, fillHover)
+    THEME_COLOR(fillPressed, fillPressed)
+    THEME_COLOR(textStrong, textStrong)
+    THEME_COLOR(accentHover, accentHover)
+    THEME_COLOR(accentPressed, accentPressed)
+    THEME_COLOR(shadow, shadow)
 #undef THEME_COLOR
     Q_PROPERTY(QString fontFamily READ fontFamily NOTIFY changed)
     Q_PROPERTY(QString monoFamily READ monoFamily NOTIFY changed)
     Q_PROPERTY(QString themeName READ themeName NOTIFY changed)
     Q_PROPERTY(QVariantMap font READ font NOTIFY changed)
     Q_PROPERTY(QVariantMap space READ space NOTIFY changed)
+    Q_PROPERTY(QVariantMap type READ type NOTIFY changed)
     Q_PROPERTY(int radius READ radius NOTIFY changed)
+    Q_PROPERTY(int cardRadius READ cardRadius NOTIFY changed)
+    Q_PROPERTY(int controlRadius READ controlRadius NOTIFY changed)
+    Q_PROPERTY(int smallRadius READ smallRadius NOTIFY changed)
     Q_PROPERTY(bool rounded READ rounded NOTIFY changed)
     Q_PROPERTY(int normalBorderWidth READ normalBorderWidth NOTIFY changed)
     Q_PROPERTY(int hoverBorderWidth READ hoverBorderWidth NOTIFY changed)
@@ -63,6 +79,9 @@ class Theme : public QObject
 public:
     explicit Theme(QObject *parent = nullptr);
     static void setFontFamilies(const QString &fontFamily, const QString &monoFamily);
+    // Registers the bundled interface face and returns its family, or an empty string when
+    // it could not be loaded.
+    static QString bundledUiFamily();
 
     QColor accent() const { return m_accent; }
     QColor accentForeground() const;
@@ -100,8 +119,24 @@ public:
     QColor menuScrim() const { return m_menuScrim; }
     QColor menuSelectedBackground() const { return m_menuSelectedBackground; }
     QColor menuSelectedText() const { return m_menuSelectedText; }
+    QColor canvas() const { return m_canvas; }
+    QColor card() const { return m_card; }
+    QColor raised() const { return m_raised; }
+    QColor stroke() const;
+    QColor strokeStrong() const;
+    QColor fill() const;
+    QColor fillHover() const;
+    QColor fillPressed() const;
+    QColor textStrong() const { return m_textStrong; }
+    QColor accentHover() const;
+    QColor accentPressed() const;
+    QColor shadow() const;
     QString fontFamily() const { return m_fontFamily; }
-    QString monoFamily() const { return m_fontFamily; }
+    QString monoFamily() const { return m_monoFamily; }
+    QVariantMap type() const { return m_type; }
+    int cardRadius() const { return m_radius > 0 ? qBound(6, m_radius, 12) : 0; }
+    int controlRadius() const { return m_radius > 0 ? qBound(3, qRound(m_radius * .6), 8) : 0; }
+    int smallRadius() const { return m_radius > 0 ? qBound(2, qRound(m_radius * .4), 5) : 0; }
     QString themeName() const { return m_themeName; }
     QVariantMap font() const { return m_font; }
     QVariantMap space() const { return m_space; }
@@ -133,7 +168,10 @@ private:
     QColor m_tooltipBackground, m_tooltipText, m_tooltipBorder;
     QColor m_menuBackground, m_menuText, m_menuBorder, m_menuScrim;
     QColor m_menuSelectedBackground, m_menuSelectedText;
-    QString m_fontFamily = QStringLiteral("monospace");
+    QColor m_canvas, m_card, m_raised, m_textStrong;
+    QString m_fontFamily = QStringLiteral("sans-serif");
+    QString m_monoFamily = QStringLiteral("monospace");
+    QVariantMap m_type;
     QString m_themeName;
     QVariantMap m_font, m_space;
     int m_radius = 0;

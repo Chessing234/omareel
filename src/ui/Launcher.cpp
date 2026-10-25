@@ -16,6 +16,7 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QSet>
+#include <QTextStream>
 #include <QUrl>
 #include <algorithm>
 #include <ctime>
@@ -23,6 +24,17 @@
 #include <unistd.h>
 
 using namespace Omareel;
+
+// V4L2 names cameras "<device>: <stream>", cut to 31 characters ("Cam Link 4K: Cam Link 4K",
+// "Integrated Webcam: Integrated W"); a stream half that only repeats the device is dropped.
+static QString cameraName(const QString &description)
+{
+    const qsizetype separator = description.indexOf(QLatin1String(": "));
+    if (separator <= 0) return description;
+    const QString device = description.left(separator).trimmed();
+    const QString stream = description.mid(separator + 2).trimmed();
+    return device.startsWith(stream) ? device : description;
+}
 
 static qint64 monotonicUs()
 {
@@ -33,10 +45,15 @@ static qint64 monotonicUs()
 
 Launcher::Launcher(QObject *parent): QObject(parent)
 {
-    if (!CaptureExclusion::ensureLoaded().loaded)
+    const CaptureExclusion::Status exclusion = CaptureExclusion::ensureLoaded();
+    if (!exclusion.loaded) {
         m_captureExclusionNote = QGuiApplication::screens().size() > 1
             ? QStringLiteral("Overlays move off the recorded screen while recording")
             : QStringLiteral("Self-view hides while recording");
+        m_captureExclusionReason = exclusion.reason;
+        QTextStream(stderr) << "omareel: " << exclusion.reason
+                            << "; recording overlays stay off the recorded screen\n";
+    }
     const RecordingPreferences preferences = RecordingPreferences::load();
     m_systemAudio = preferences.systemAudio;
     m_microphone = preferences.microphone;
@@ -254,7 +271,20 @@ void Launcher::refreshWebcamDevices()
         if (node.isEmpty() || seen.contains(node)) continue;
         seen.insert(node);
         devices << QVariantMap{{QStringLiteral("value"), stableCameraPath(node)},
-            {QStringLiteral("text"), QStringLiteral("%1 (%2)").arg(camera.description(), node)}};
+            {QStringLiteral("text"), cameraName(camera.description())}, {QStringLiteral("node"), node}};
+    }
+    // Two cameras of the same model are told apart by their device node.
+    for (QVariant &device : devices) {
+        QVariantMap entry = device.toMap();
+        const QString text = entry.value(QStringLiteral("text")).toString();
+        const auto sameName = [&](const QVariant &other) {
+            return other.toMap().value(QStringLiteral("text")).toString() == text;
+        };
+        if (std::count_if(devices.cbegin(), devices.cend(), sameName) > 1) {
+            entry.insert(QStringLiteral("text"), QStringLiteral("%1 (%2)").arg(text,
+                entry.value(QStringLiteral("node")).toString()));
+            device = entry;
+        }
     }
     if (m_cameraDevices.isEmpty() && QFileInfo::exists(m_webcamDevice))
         devices << QVariantMap{{QStringLiteral("value"), m_webcamDevice},

@@ -18,28 +18,6 @@ Rectangle {
             editor.setProjectValue("name", projectName.text)
     }
 
-    component BarMenuItem: MenuItem {
-        id: menuItem
-        implicitHeight: 32
-        leftPadding: 10
-        rightPadding: 10
-        topPadding: 0
-        bottomPadding: 0
-        hoverEnabled: true
-        contentItem: Label {
-            text: menuItem.text
-            color: menuItem.highlighted ? theme.menuSelectedText
-                                        : menuItem.enabled ? theme.menuText : theme.textFaint
-            font.pixelSize: theme.font.body
-            font.weight: Font.Medium
-            verticalAlignment: Text.AlignVCenter
-        }
-        background: Rectangle {
-            radius: theme.radius
-            color: menuItem.highlighted ? theme.menuSelectedBackground : "transparent"
-        }
-    }
-
     Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
@@ -52,49 +30,68 @@ Rectangle {
         anchors.fill: parent
         anchors.leftMargin: 16
         anchors.rightMargin: 12
-        spacing: 8
+        spacing: 6
 
-        RowLayout {
-            Layout.minimumWidth: 102
-            spacing: 6
-            IconImage {
-                Layout.preferredWidth: 20; Layout.preferredHeight: 20
-                source: "qrc:/omareel/assets/icons/reel.svg"
-                sourceSize: Qt.size(20, 20)
-                color: theme.foreground
-            }
-            Label {
-                text: "omareel"
-                font.weight: Font.DemiBold
-                font.pixelSize: theme.font.title
-                color: theme.foreground
+        IconImage {
+            id: logo
+            Layout.preferredWidth: 18; Layout.preferredHeight: 18
+            source: "qrc:/omareel/assets/icons/reel.svg"
+            sourceSize: Qt.size(18, 18)
+            color: logoHover.hovered ? theme.accent : theme.textStrong
+            Behavior on color { ColorAnimation { duration: 200 } }
+            HoverHandler { id: logoHover; onHoveredChanged: if (hovered) logoSpin.restart() }
+            RotationAnimator on rotation {
+                id: logoSpin
+                running: false
+                from: 0; to: 360; duration: 700
+                easing.type: Easing.OutCubic
             }
         }
-        Rectangle {
-            Layout.preferredWidth: 1
-            Layout.preferredHeight: 16
+        Label {
+            text: "omareel"
+            font.family: theme.monoFamily
+            font.weight: Font.Bold
+            font.pixelSize: theme.type.body
+            color: theme.textStrong
+        }
+        Label {
             Layout.leftMargin: 4
-            Layout.rightMargin: 4
-            color: theme.hairlineStrong
+            Layout.rightMargin: 0
+            text: "/"
+            font.family: theme.monoFamily
+            font.pixelSize: theme.type.body
+            color: theme.textFaint
         }
         Item {
             Layout.fillWidth: true
             Layout.minimumWidth: 120
-            Layout.preferredWidth: 300
-            Layout.preferredHeight: 32
-            OmTextField {
+            Layout.preferredHeight: 30
+            TextField {
                 id: projectName
-                anchors.left: parent.left
-                width: Math.min(parent.width, Math.max(120, Math.min(300, contentWidth + 24)))
-                height: 32
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.min(parent.width, Math.max(80, Math.min(360, nameMetrics.advanceWidth + 22)))
+                height: 30
                 text: editor.bundleName
                 selectByMouse: true
                 hoverEnabled: true
-                font.pixelSize: theme.font.title
+                font.family: theme.fontFamily
+                font.pixelSize: theme.type.body
                 font.weight: Font.DemiBold
                 leftPadding: 8; rightPadding: 8; topPadding: 0; bottomPadding: 0
-                color: theme.foreground
+                verticalAlignment: TextInput.AlignVCenter
+                color: theme.textStrong
+                selectionColor: Qt.alpha(theme.accent, .35)
+                selectedTextColor: theme.textStrong
                 focusPolicy: Qt.StrongFocus
+                TextMetrics { id: nameMetrics; font: projectName.font; text: projectName.text }
+                background: Rectangle {
+                    radius: theme.controlRadius
+                    color: projectName.activeFocus ? theme.canvas
+                         : projectName.hovered ? theme.fillHover : "transparent"
+                    border.width: projectName.activeFocus ? 1 : 0
+                    border.color: theme.accent
+                    Behavior on color { ColorAnimation { duration: 140 } }
+                }
                 onEditingFinished: root.commitProjectName()
                 onAccepted: {
                     root.commitProjectName()
@@ -109,107 +106,146 @@ Rectangle {
                 }
             }
         }
-        Label {
-            visible: root.width >= 1200
-            text: editor.dirty ? "Unsaved changes" : "Saved · " + root.savedTime
-            color: theme.textMuted
-            font.pixelSize: theme.font.bodySmall
+        Row {
+            visible: root.width >= 1000
+            spacing: 6
+            Layout.rightMargin: 6
+            Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: 6; height: 6; radius: 3
+                color: editor.dirty ? theme.zoomAccent : theme.textFaint
+                Behavior on color { ColorAnimation { duration: 200 } }
+            }
+            Label {
+                anchors.verticalCenter: parent.verticalCenter
+                text: editor.dirty ? "Unsaved changes" : "Saved " + root.savedTime
+                color: theme.textMuted
+                font.pixelSize: theme.type.small
+            }
         }
-        IconToolButton {
+        OmIconButton {
             enabled: editor.canUndo
             icon.source: "qrc:/omareel/assets/icons/lucide/undo-2.svg"
             Accessible.name: "Undo"
-            ToolTip.visible: hovered
-            ToolTip.text: "Undo"
+            tooltipText: "Undo"
+            tooltipShortcut: "Ctrl Z"
             onClicked: editor.undo()
         }
-        IconToolButton {
+        OmIconButton {
             enabled: editor.canRedo
             icon.source: "qrc:/omareel/assets/icons/lucide/redo-2.svg"
             Accessible.name: "Redo"
-            ToolTip.visible: hovered
-            ToolTip.text: "Redo"
+            tooltipText: "Redo"
+            tooltipShortcut: "Ctrl Shift Z"
             onClicked: editor.redo()
         }
-        IconToolButton {
+        OmIconButton {
             enabled: editor.dirty
             icon.source: "qrc:/omareel/assets/icons/lucide/save.svg"
             Accessible.name: "Save project"
-            ToolTip.visible: hovered
-            ToolTip.text: "Save project (Ctrl+S)"
+            tooltipText: "Save project"
+            tooltipShortcut: "Ctrl S"
             onClicked: { root.commitProjectName(); editor.saveNow() }
         }
         Rectangle {
             Layout.preferredWidth: 1
-            Layout.preferredHeight: 20
-            Layout.leftMargin: 4
-            Layout.rightMargin: 4
-            color: theme.hairlineStrong
+            Layout.preferredHeight: 18
+            Layout.leftMargin: 6
+            Layout.rightMargin: 6
+            color: theme.separator
         }
-        EditorButton {
+        OmButton {
             id: presetButton
             Layout.preferredWidth: implicitWidth
             Layout.minimumWidth: implicitWidth
             text: "Presets"
             trailingIconSource: "qrc:/omareel/assets/icons/lucide/chevron-down.svg"
-            onClicked: presetsMenu.open()
+            selected: presetsMenu.visible
+            onClicked: presetsMenu.visible ? presetsMenu.close() : presetsMenu.open()
         }
-        EditorButton {
+        OmButton {
             Layout.preferredWidth: implicitWidth
             Layout.minimumWidth: implicitWidth
+            Layout.leftMargin: 2
             primary: true
             text: "Export"
             icon.source: "qrc:/omareel/assets/icons/lucide/download.svg"
+            tooltipText: "Export video"
+            tooltipShortcut: "Ctrl E"
             onClicked: root.showExport()
         }
     }
 
-    Menu {
+    OmMenu {
         id: presetsMenu
         parent: presetButton
-        y: presetButton.height + 4
-        width: 188
-        padding: 4
-        background: OmPopupCard { padding: 0 }
-        BarMenuItem { text: "Save current…"; onTriggered: savePresetDialog.open() }
-        MenuSeparator { contentItem: Rectangle { implicitHeight: 1; color: theme.hairline } }
+        x: presetButton.width - width
+        y: presetButton.height + 6
+        width: 210
+        OmMenuItem { text: "Save current as preset…"; onTriggered: savePresetDialog.open() }
+        OmMenuSeparator { visible: editor.presetNames.length > 0; height: visible ? implicitHeight : 0 }
         Repeater {
             model: editor.presetNames
-            delegate: BarMenuItem {
+            delegate: OmMenuItem {
                 required property string modelData
                 text: modelData
                 onTriggered: editor.loadPreset(modelData)
             }
         }
-        MenuSeparator { contentItem: Rectangle { implicitHeight: 1; color: theme.hairline } }
-        BarMenuItem {
+        OmMenuSeparator { }
+        OmMenuItem {
             text: "Delete preset…"
+            destructive: true
             enabled: editor.presetNames.length > 0
             onTriggered: deletePresetDialog.open()
         }
     }
 
-    Dialog {
-        id: savePresetDialog
+    component PresetDialog: Dialog {
+        id: dialog
+        property string heading: ""
+        property string detail: ""
         parent: Overlay.overlay
         anchors.centerIn: parent
         width: 380
         modal: true
         focus: true
-        padding: 24
+        padding: 22
         standardButtons: Dialog.NoButton
-        Overlay.modal: Rectangle { color: Qt.alpha(theme.surface, .55) }
-        background: OmPopupCard { }
+        Overlay.modal: Rectangle { color: Qt.alpha(theme.canvas, .6) }
+        background: OmPopupCard { padding: 0 }
+        enter: Transition {
+            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 160; easing.type: Easing.OutCubic }
+            NumberAnimation { property: "scale"; from: .96; to: 1; duration: 220; easing.type: Easing.OutQuint }
+        }
+        exit: Transition { NumberAnimation { property: "opacity"; to: 0; duration: 100 } }
+    }
+
+    PresetDialog {
+        id: savePresetDialog
+        onOpened: { presetName.text = ""; presetName.forceActiveFocus() }
         contentItem: ColumnLayout {
-            spacing: 16
-            Label { text: "Save preset"; font.pixelSize: theme.font.title; font.weight: Font.DemiBold; color: theme.foreground }
-            OmTextField { id: presetName; Layout.fillWidth: true; placeholderText: "Preset name"; selectByMouse: true }
+            spacing: 14
+            ColumnLayout {
+                spacing: 4
+                Label { text: "Save preset"; font.pixelSize: theme.type.title; font.weight: Font.DemiBold; color: theme.textStrong }
+                Label { text: "Background, frame, cursor, and camera styling."; font.pixelSize: theme.type.small; color: theme.textMuted }
+            }
+            OmTextField {
+                id: presetName
+                Layout.fillWidth: true
+                placeholderText: "Preset name"
+                selectByMouse: true
+                onAccepted: if (text.trim().length > 0) { editor.savePreset(text); savePresetDialog.close() }
+            }
             RowLayout {
                 Layout.fillWidth: true
+                Layout.topMargin: 4
+                spacing: 8
                 Item { Layout.fillWidth: true }
-                EditorButton { text: "Cancel"; onClicked: savePresetDialog.close() }
-                EditorButton {
-                    text: "Save"
+                OmButton { text: "Cancel"; bordered: true; onClicked: savePresetDialog.close() }
+                OmButton {
+                    text: "Save preset"
                     primary: true
                     enabled: presetName.text.trim().length > 0
                     onClicked: { editor.savePreset(presetName.text); savePresetDialog.close() }
@@ -218,26 +254,23 @@ Rectangle {
         }
     }
 
-    Dialog {
+    PresetDialog {
         id: deletePresetDialog
-        parent: Overlay.overlay
-        anchors.centerIn: parent
-        width: 380
-        modal: true
-        focus: true
-        padding: 24
-        standardButtons: Dialog.NoButton
-        Overlay.modal: Rectangle { color: Qt.alpha(theme.surface, .55) }
-        background: OmPopupCard { }
         contentItem: ColumnLayout {
-            spacing: 16
-            Label { text: "Delete preset"; font.pixelSize: theme.font.title; font.weight: Font.DemiBold; color: theme.foreground }
-            EditorComboBox { id: deletePresetName; Layout.fillWidth: true; model: editor.presetNames }
+            spacing: 14
+            ColumnLayout {
+                spacing: 4
+                Label { text: "Delete preset"; font.pixelSize: theme.type.title; font.weight: Font.DemiBold; color: theme.textStrong }
+                Label { text: "This can't be undone."; font.pixelSize: theme.type.small; color: theme.textMuted }
+            }
+            OmDropdown { id: deletePresetName; Layout.fillWidth: true; model: editor.presetNames }
             RowLayout {
                 Layout.fillWidth: true
+                Layout.topMargin: 4
+                spacing: 8
                 Item { Layout.fillWidth: true }
-                EditorButton { text: "Cancel"; onClicked: deletePresetDialog.close() }
-                EditorButton {
+                OmButton { text: "Cancel"; bordered: true; onClicked: deletePresetDialog.close() }
+                OmButton {
                     text: "Delete"
                     primary: true
                     destructive: true

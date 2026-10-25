@@ -1,3 +1,4 @@
+import QtQuick.Layouts
 import Omareel.Ui
 
-OmToggle { }
+OmToggle { Layout.fillWidth: true }
