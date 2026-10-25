@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import Omareel.Ui
 
 ColumnLayout {
     id: root
@@ -21,35 +22,53 @@ ColumnLayout {
     }
 
     EditorSwitch {
-        Layout.fillWidth: true
-        Layout.preferredHeight: 32
         text: "Show keystrokes"
+        description: "Display keys pressed during the recording"
         checked: root.settings.enabled
         onToggled: editor.setProjectValue("keystrokes.enabled", checked)
     }
-    EditorSwitch {
+    ColumnLayout {
         Layout.fillWidth: true
-        Layout.preferredHeight: 32
-        text: "Shortcuts only"
-        checked: root.settings.showOnlyShortcuts
-        onToggled: editor.setProjectValue("keystrokes.showOnlyShortcuts", checked)
+        spacing: theme.space.panelGap
+        enabled: root.settings.enabled
+        opacity: enabled ? 1 : .42
+        Behavior on opacity { NumberAnimation { duration: 160 } }
+        EditorSwitch {
+            text: "Shortcuts only"
+            description: "Hide plain letters and digits; keep shortcuts and editing keys"
+            checked: root.settings.showOnlyShortcuts
+            onToggled: editor.setProjectValue("keystrokes.showOnlyShortcuts", checked)
+        }
+        // Preview of how a shortcut will look on the video.
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 64
+            radius: theme.controlRadius
+            color: theme.canvas
+            border.width: 1
+            border.color: theme.stroke
+            Row {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 4
+                Repeater {
+                    model: ["Ctrl", "Shift", "P"]
+                    delegate: OmKeycap { required property string modelData; text: modelData; implicitHeight: 24 }
+                }
+            }
+        }
+        OmSeparator { Layout.fillWidth: true; Layout.topMargin: 2 }
+        OmSettingRow {
+            label: "Position"
+            EditorComboBox {
+                Layout.preferredWidth: 150
+                model: root.positions
+                textRole: "label"
+                currentIndex: root.positionIndex(root.settings.position)
+                onActivated: editor.setProjectValue("keystrokes.position", model[currentIndex].value)
+            }
+        }
+        PanelSlider { Layout.fillWidth: true; label: "Size"; path: "keystrokes.size"; from: .5; to: 2; value: root.settings.size; stepSize: .05; decimals: 2; suffix: "×" }
+        PanelSlider { Layout.fillWidth: true; label: "Hold"; path: "keystrokes.holdMs"; from: 100; to: 3000; value: root.settings.holdMs; stepSize: 50; suffix: " ms" }
     }
-    Label {
-        Layout.fillWidth: true
-        text: "Hide unmodified letters and digits while keeping shortcuts and editing keys."
-        wrapMode: Text.WordWrap
-        color: theme.textMuted
-        font.pixelSize: theme.font.bodySmall
-    }
-    PanelLabel { text: "Position" }
-    EditorComboBox {
-        Layout.fillWidth: true
-        Layout.preferredHeight: 32
-        model: root.positions
-        textRole: "label"
-        currentIndex: root.positionIndex(root.settings.position)
-        onActivated: editor.setProjectValue("keystrokes.position", model[currentIndex].value)
-    }
-    PanelSlider { Layout.fillWidth: true; label: "Size"; path: "keystrokes.size"; from: .5; to: 2; value: root.settings.size; stepSize: .05; decimals: 2 }
-    PanelSlider { Layout.fillWidth: true; label: "Hold (ms)"; path: "keystrokes.holdMs"; from: 100; to: 3000; value: root.settings.holdMs; stepSize: 50 }
 }

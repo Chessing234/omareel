@@ -49,7 +49,7 @@ omareel record [opts]         # toggle: start if not recording, else stop
     --region                    # slurp pick (default: omarchy-capture-region smart if available, else slurp)
     --window                    # slurp with window rects (hyprctl clients) snapping
     --with-desktop-audio --with-microphone-audio
-    --with-webcam [--webcam-device=/dev/videoN] --no-webcam
+    --with-webcam [--webcam-device=PATH] --no-webcam   # /dev/videoN or a /dev/v4l link
     --fps N (default 60)  --dir PATH (default $XDG_VIDEOS_DIR/omareel)
     --no-open                   # don't launch editor after stop
     --stop                      # only stop; exit 1 if not recording
@@ -63,9 +63,14 @@ are copied from the legacy config directory, and legacy bundle directories remai
 
 `record` is designed to be bound to a Hyprland key (toggle semantics, like
 `omarchy-capture-screenrecording`). Recording state file: `$XDG_RUNTIME_DIR/omareel/recording.json`
-(pid, bundle path, started_us). On stop: SIGINT gsr, wait ≤5 s, finalize, write bundle,
+(pid, bundle path, started_us). On stop: set `stopping` in the state file (the bar and launcher
+show "Saving…"), SIGINT gsr, wait ≤5 s, finalize, write bundle,
 notify via `omarchy-notification-send "Recording saved" --exec omareel edit <bundle>` when
-available, and (unless `--no-open`) spawn `omareel edit <bundle>` detached.
+available, and (unless `--no-open`) spawn `omareel edit <bundle>` detached. The notification
+instead says the recording was saved without audio when none could be muxed, or with a silent
+microphone when ffmpeg's `volumedetect` saw only zero samples from it (a real microphone always
+picks up some noise). A microphone missing from `pactl list short sources` at start is replaced
+by the default one, and the start notification says so.
 Also call `omarchy-shell -q omarchy.indicators refresh` if present (it watches gsr pid).
 
 ## 2. Bundle format (`Name.omareel/` directory)
@@ -100,9 +105,14 @@ When enabled, the recording bar owns a Qt Multimedia capture session. One camera
 the live bar preview and a bounded ffmpeg pipe worker, so the device is opened only once. The bar is also launched
 as a hidden capture host for `--no-bar`; this keeps camera ownership in an existing GUI process
 without turning the recording daemon into a GUI application. The first frame admitted for recording records the
-monotonic timestamp in `camera.mp4.ts`. If no frame arrives within two seconds, the bar releases the
-device and the daemon starts the V4L2 fallback capture. `capture.json.camera.backend` records
-`ffmpeg-pipe` or `v4l2-fallback`, along with the device, dimensions, frame rate, first-frame
+monotonic timestamp in `camera.mp4.ts`. Some cameras take seconds to start streaming, so the bubble
+says "Starting camera…" until the first frame; if none arrives within ten seconds, the bar releases
+the device and the recording continues without the camera. Settings name the camera by its
+`/dev/v4l/by-id` link, or its `by-path` link when another node shares the by-id name (a laptop
+webcam's IR sensor has the same USB serial), because `/dev/videoN` numbers follow enumeration
+order and change when a dock reconnects. `webcam.chosenDevice` keeps the camera last picked in
+the launcher while `webcam.device` names the one in use. `capture.json.camera.backend` records
+`ffmpeg-pipe`, along with the device, dimensions, frame rate, first-frame
 timestamp, rotation, and horizontal flip. Rotation and flip affect previews and rendering but are
 not baked into `camera.mp4`.
 
@@ -152,11 +162,23 @@ monotonic clock and copy-muxed with the video at stop.
              "clickShrink":0.85,"hideWhenIdleMs":null,"style":"macos"},
   "audio": {"desktop":true,"mic":true,"volume":1.0},
   "camera": {"enabled":false,"position":"bottom-right","size":0.25,
-             "shape":"round","radius":16,"crop":"original","flipHorizontal":false,"rotation":0,
-             "shadow":true,"scaleDuringZoom":0.7,"offset":{"x":0.02,"y":0.02}},
+             "shape":"round",       // round | square | rectangle (the webcam's own aspect)
+             "radius":16,           // corners of square and rectangle, px at 1080p reference
+             "flipHorizontal":false,"rotation":0,
+             "shadow":{"enabled":true,"intensity":0.28,"blur":23,"distance":20,"angle":45},
+             "border":{"enabled":true,"width":6,"color":"#ffffff","alpha":0.7},
+             "scaleDuringZoom":0.7,
+             "offset":{"x":0.035,"y":0.035}},  // gap to the border's outside, × the shorter side
   "export": {"format":"mp4","fps":60,"width":1920,"quality":"high","gif":{"fps":20,"width":960}}
 }
 ```
+
+Projects before `defaultsVersion` 3 kept the camera's `crop` (square | original) apart from a
+`round | rounded | square` shape whose only difference was the corners; loading folds the crop into
+`shape` and turns the old sharp `square` into a radius of 0. Before `defaultsVersion` 4 the camera's
+`offset` was a fraction of the canvas width (x) and height (y), so the gap at the bottom was smaller
+than at the side; untouched old camera shadow, border width, and offset values move to the new
+defaults, and the shadow and border stay switched as they were.
 
 Output size: derived from `aspect` + `export.width`; height = width / aspect (round to even).
 For `auto`, aspect = cropped source aspect.
@@ -424,3 +446,81 @@ Defaults: MP4 { fps 60, quality social, height 1080 }  GIF { fps 15, quality stu
 ```
 
 Clip speed choices: 0.5 0.75 1 1.2 1.4 1.6 1.8 2 3 4 8 16 24 (stored as `speed`).
+
+## 9. Clip layouts
+
+These extend §3 and §4.
+
+### 9.1 Model
+
+```jsonc
+"clips": [
+  {"id":"intro","in":0.0,"out":8.2,"speed":1.0,"layout":"camera"},   // webcam full frame
+  {"id":"c1","in":8.2,"out":95.0,"speed":1.0},                        // "default": screen + bubble
+  {"id":"c2","in":95.0,"out":110.0,"speed":1.0,"layout":"screen"}     // screen, no bubble
+],
+"camera": { ..., "fullFrame": "fill" }   // fill | square
+```
+
+`layout` is written only when it is not `default`, so projects without layouts are unchanged.
+Splitting a clip copies its layout to both halves.
+
+### 9.2 Evaluation (`core/LayoutTimeline`, pure, unit-tested)
+
+`sampleLayout(clips, outputTime, cameraAvailable, bubbleEnabled)` returns `cameraFull` (0 bubble,
+1 full frame) and `bubble` (bubble visibility). Targets: `camera` → {1, 0}; `screen` → {0, 0};
+`default` → {0, camera.enabled}; without a camera every layout is {0, 0}. Clip `k` eases from
+clip `k - 1`'s target to its own over its first `min(0.5 s, clip output length)` with
+easeInOutCubic, so every clip ends on its target. Layouts use output time, so transitions are
+the same across cuts and speed changes.
+
+### 9.3 Rendering
+
+`CameraOverlay` interpolates position, size and corner radius from the bubble rect to the full
+rect by `cameraFull`; border and shadow fade with it. The full rect is the canvas (`fill`) or the
+largest centred square (`square`); `square` adds a blurred copy of the camera behind it
+(`BlurredBackdrop`, a 24 px capture blurred and scaled to cover; a dark fill under software
+rendering). The camera is cover-cropped to its current rect. Opacity is `min(1, cameraFull +
+bubble)`, so no layout change dips the camera. Once `cameraFull` reaches 1 the background, stage
+and keystrokes are not drawn. A camera layout shows the camera's first frame before the camera
+started. Export decodes the camera whenever a clip uses the camera layout, at a size that covers
+the output.
+
+Preview: the camera player is re-seeked when it drifts more than 250 ms from the screen, or more
+than 80 ms while a camera layout is on screen.
+
+### 9.4 Inserted videos
+
+```jsonc
+{"id":"m-…","in":0.0,"out":14.2,"speed":1.0,"media":"media/demo.mp4","fit":"fit"}  // fit | fill | framed
+```
+
+`media` is bundle-relative and must stay inside `media/` (`sanitizedMediaPath`); a clip whose
+path escapes it is dropped on load. Clips without `media` are pieces of the recording, which stay
+in recording order: a recording clip's in/out move between the nearest recording clips
+(`ClipTimeline::recordingBounds`), an inserted clip's within its video. At least one recording
+clip always remains. Zooms, the motion track, keystrokes and the camera use recording time
+(`ClipTimeline::recordingSourceTime`, which inside an inserted clip is the recording time it
+interrupts), and `outputRange` never maps recording time into an inserted clip.
+
+Inserting probes the file (`render/MediaProbe`: display size after rotation and sample aspect,
+video-stream duration), reflinks it (`FICLONE`) or copies it to `media/.name.part`, renames it
+to a unique name, then splits the clip at the playhead and inserts the new clip under one undo
+snapshot. Undo never deletes media files.
+
+Rendering: `MediaLayer` draws the inserted clip with its own `RoundedFrame` (FrameSource
+`mediaFrameSource`, framed only for `framed`) and, for `fit`, a `BlurredBackdrop`. While it is
+on screen the stage, camera and keystrokes are hidden; for `fit` and `fill` the background too.
+Export decodes each clip from its own file, scaled to cover the output. Audio is one segment
+per clip in output order: the recording (gated by the desktop/mic toggles), the inserted file
+opened at its in point (`-ss in -t length -i`), or `anullsrc` silence; each is resampled to
+48 kHz stereo, tempo-adjusted, padded and trimmed to the clip's exact output length, then
+concatenated. Click sounds skip inserted clips. A missing inserted file fails the export.
+
+Preview: a second `QMediaPlayer` plays inserted clips. `playing` is the transport's state, not a
+player's, so handing playback from one player to the other (the incoming one starts before the
+outgoing one pauses) does not toggle it. While a recording clip is active the inserted clip after
+it is loaded and paused on its first frame, and during an inserted clip the screen player waits
+where the recording resumes. A player's end of media also ends its clip. The media layer stays
+hidden until the loaded file has delivered a frame.
+

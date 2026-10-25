@@ -3,6 +3,7 @@
 #include <wayland-client.h>
 #include "core/InputLog.h"
 #include "core/ZoomTimeline.h"
+#include "record/CameraCapture.h"
 #include "record/Recorder.h"
 #include "render/Exporter.h"
 #include "render/VideoDecoding.h"
@@ -96,7 +97,9 @@ static ResolvedFonts resolveFonts()
         family = QString::fromUtf8(match.readAllStandardOutput()).trimmed();
     if (family.isEmpty()) family = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
     qInfo().noquote() << "omareel: fontconfig monospace ->" << family;
-    return {family, family};
+    QString ui = Theme::bundledUiFamily();
+    if (ui.isEmpty()) ui = QFontDatabase::systemFont(QFontDatabase::GeneralFont).family();
+    return {ui, family};
 }
 
 static int shellFontBaseSize()
@@ -374,7 +377,9 @@ static int recordCommand(const QStringList &arguments)
     const bool explicitWebcam = arguments.contains(QStringLiteral("--with-webcam"))
         || arguments.contains(QStringLiteral("--no-webcam"));
     if (!explicitWebcam) options.webcam = preferences.webcamEnabled;
-    options.webcamDevice = preferences.webcamDevice;
+    // The launcher saves the camera it fell back to while the chosen one was unplugged.
+    options.webcamDevice = cameraNodePath(preferences.webcamChosenDevice).isEmpty()
+        ? preferences.webcamDevice : preferences.webcamChosenDevice;
     options.webcamHeight = preferences.webcamHeight;
     options.webcamRotation = preferences.webcamRotation;
     options.webcamFlipHorizontal = preferences.webcamFlipHorizontal;
@@ -431,8 +436,9 @@ static int recordCommand(const QStringList &arguments)
             || arguments.contains(QStringLiteral("--with-microphone-audio"))))
         return usage(QStringLiteral("--no-audio cannot be combined with audio enable flags"));
     if (options.fps <= 0 || options.fps > 240) return usage(QStringLiteral("fps must be between 1 and 240"));
-    if (options.webcam && !options.webcamDevice.startsWith(QLatin1String("/dev/video")))
-        return usage(QStringLiteral("webcam device must be a /dev/video device"));
+    if (options.webcam && !options.webcamDevice.startsWith(QLatin1String("/dev/video"))
+        && !options.webcamDevice.startsWith(QLatin1String("/dev/v4l/")))
+        return usage(QStringLiteral("webcam device must be a /dev/video device or a /dev/v4l link"));
     if (options.webcamHeight != 720 && options.webcamHeight != 1080)
         return usage(QStringLiteral("webcam height must be 720 or 1080"));
     if (qEnvironmentVariable("OMAREEL_NO_BAR") == QLatin1String("1")) options.noBar = true;
@@ -569,7 +575,7 @@ int main(int argc, char **argv)
     app.setApplicationVersion(QStringLiteral(OMAREEL_VERSION));
     const ResolvedFonts resolvedFonts = resolveFonts();
     QFont applicationFont(resolvedFonts.ui);
-    applicationFont.setPixelSize(shellFontBaseSize());
+    applicationFont.setPixelSize(qRound(shellFontBaseSize() * 1.083));
     QGuiApplication::setFont(applicationFont);
     Theme::setFontFamilies(resolvedFonts.ui, resolvedFonts.mono);
     if (graphical)

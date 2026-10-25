@@ -61,7 +61,22 @@ struct Keystrokes {
     bool showOnlyShortcuts = true;
     int holdMs = 900;
 };
-struct Clip { QString id; double in = 0.0; double out = 0.0; double speed = 1.0; };
+// A piece of the recording, or of an inserted video when media is set.
+// layout: "default" shows the screen with the camera bubble, "camera" the webcam full frame,
+// "screen" the screen without the bubble. Inserted videos ignore it.
+// media: path of an inserted video, relative to the bundle and inside its media/ directory.
+// fit: how an inserted video meets the canvas: "fit" (whole, over a blurred copy), "fill"
+// (covering the canvas), "framed" (in the frame, over the background, like the screen).
+struct Clip {
+    QString id;
+    double in = 0.0;
+    double out = 0.0;
+    double speed = 1.0;
+    QString layout = QStringLiteral("default");
+    QString media;
+    QString fit = QStringLiteral("fit");
+    bool isMedia() const { return !media.isEmpty(); }
+};
 struct ZoomSegment {
     QString id;
     double start = 0.0;
@@ -75,15 +90,22 @@ struct Camera {
     bool enabled = false;
     QString position = QStringLiteral("bottom-right");
     double size = 0.25;
+    // round, square, or rectangle (the webcam's own aspect). radius rounds the corners of a
+    // square or rectangle, in pixels at 1080p.
     QString shape = QStringLiteral("round");
     double radius = 16.0;
-    QString crop = QStringLiteral("original");
     bool flipHorizontal = false;
     int rotation = 0;
-    Shadow shadow{false, 0.55, 18.0, 18.0, 90.0};
-    Border border{false, 2.0, QColor(Qt::white), 0.7};
+    // The shadow falls down and to the right, at 45°.
+    Shadow shadow{true, 0.28, 23.0, 20.0, 45.0};
+    Border border{true, 6.0, QColor(Qt::white), 0.7};
     double scaleDuringZoom = 0.7;
-    QPointF offset{0.02, 0.02};
+    // Gap from the corner to the outside of the border, as a fraction of the canvas's shorter
+    // side, so both edges get the same gap at any aspect.
+    QPointF offset{0.035, 0.035};
+    // How a clip with the camera layout shows the webcam: "fill" covers the whole canvas,
+    // "square" keeps a centred square over a blurred copy of the camera.
+    QString fullFrame = QStringLiteral("fill");
 };
 struct GifExport { int fps = 15; int height = 480; QString quality = QStringLiteral("studio"); bool loop = true; };
 struct ExportSettings {
@@ -97,7 +119,7 @@ struct ExportSettings {
 class Project
 {
 public:
-    static constexpr int CurrentDefaultsVersion = 2;
+    static constexpr int CurrentDefaultsVersion = 4;
     static Project defaults(const QString &name = QStringLiteral("Untitled Recording"),
                             double duration = 0.0);
     static QJsonObject migrateDefaults(const QJsonObject &json, bool *changed = nullptr);
@@ -129,6 +151,10 @@ public:
 QJsonObject springToJson(const Spring &spring);
 Spring springFromJson(const QJsonObject &json, const Spring &defaults);
 QVector<double> allowedClipSpeeds();
+QStringList allowedClipLayouts();
+QStringList allowedClipFits();
+// The bundle-relative path of an inserted video, or empty unless path stays inside media/.
+QString sanitizedMediaPath(const QString &path);
 QStringList allowedAspects();
 
 } // namespace Omareel

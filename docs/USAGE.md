@@ -21,7 +21,9 @@ omareel --version
 With no command, Omareel opens its launcher. `record` is a toggle: it starts a recording when
 idle and stops the current recording when one is active. Capture omits the system cursor and
 stores raw input events beside the video so the editor and exporter can render cursor motion,
-clicks, and zooms non-destructively.
+clicks, and zooms non-destructively. Hyprland draws a software cursor into the screen image,
+where capture would record it, and by default uses one on NVIDIA whenever a monitor has VRR on;
+while recording, Omareel sets `cursor:no_hardware_cursors` to 0 and restores it afterwards.
 
 ## Commands
 
@@ -36,7 +38,8 @@ one mode may be supplied.
   both default on).
 - `--with-desktop-audio` records only system output unless the microphone flag is also present.
 - `--with-microphone-audio` records only the saved microphone device unless the system flag is
-  also present.
+  also present. If that microphone isn't plugged in, the default one records instead and the
+  start notification says so.
 - `--no-audio` records no audio and overrides the saved preferences.
 - `--fps N` sets capture rate from 1 through 240; the default is 60.
 - `--webcam-height 720|1080` sets webcam capture resolution; the saved launcher preference
@@ -52,13 +55,15 @@ one mode may be supplied.
 The shell's live REC indicator recognizes the fallback capture process. Omareel refreshes the
 indicator on both start and stop and always maintains its own recording state. On installations
 where the indicator only checks that process name, it may remain off during in-process capture.
-A stop that cannot finalize sends a critical notification.
+A stop that cannot finalize sends a critical notification. The "Recording saved" notification
+says so when the recording has no audio, or when the microphone recorded only digital silence
+(it is muted, or the audio server stopped delivering it).
 
 ## Stopping a recording
 
 An active recording can be stopped in any of these ways:
 
-- Click **Stop** on the recording bar.
+- Click **Stop** on the recording bar. It reads **Saving…** until the recording is finalized.
 - Click the REC indicator in the Omarchy bar.
 - Run `omareel record` or `omareel record --stop` again; the toggle form is intended for
   keybinds.
@@ -73,6 +78,11 @@ The launcher opens at 380×460 and grows to 380×520 while its floating self-vie
 Wayland app id is `omareel`. It needs no window rule: a toplevel whose minimum and maximum width
 match is one Hyprland floats on its own, so the launcher's fixed width keeps it floating and
 centred while its height follows the self-view controls.
+
+While the microphone is on, its row shows a level meter, so a muted microphone or a stuck audio
+server shows up before recording rather than as a silent video. The microphone and webcam menus
+follow devices as they are plugged in and pulled out. An unplugged device stays chosen and is
+used again once it is back; meanwhile the default microphone or the first camera stands in.
 
 ## Camera self-view
 
@@ -125,6 +135,7 @@ auto-generated zoom summary.
 | `Shift+Left`, `Shift+Right` | Back/forward one second |
 | `S` | Split at playhead |
 | `Z` | Add a zoom of up to two seconds at the playhead |
+| `I` | Insert a video at the playhead |
 | `Delete` | Remove the selected time range, selected zooms, or selected clip |
 | `Backspace` | Remove the selected time range |
 | `Ctrl+Z`, `Ctrl+Shift+Z` | Undo/redo |
@@ -145,10 +156,43 @@ adjust it and preview that endpoint. Seeking and Space playback stay inside the 
 stops at its end and restarts at its start. Press Delete or Backspace to cut the range and join
 the remaining footage, or Escape to clear it.
 
+## Clip layouts
+
+Each clip has a layout, chosen in the Clip panel or from the menu on the clip's label:
+
+- **Screen & camera** shows the screen with the camera bubble set up in the Camera panel.
+- **Camera** shows the webcam full screen, for a talking-head intro, outro, or aside.
+- **Screen** shows the screen without the bubble.
+
+To open on a talking head, move the playhead to where the screen part starts, press `S`, select
+the first clip, and choose Camera. Camera clips show webcam frames on the timeline. Moving between
+layouts animates over half a second at the start of the next clip: the bubble grows into the full
+frame, or shrinks back into its corner. The Camera panel's Full screen setting picks how camera
+clips look: **Fill frame** covers the whole canvas with the uncropped webcam, and **Square + blur**
+keeps a centred square over a blurred copy of the camera. Camera clips show the webcam even with
+the bubble switched off.
+
+## Inserted videos
+
+Press `I`, click the film button beside the scissors, or use **Insert video at playhead** in the
+Clip panel to add a video file (MP4, MOV, MKV, WebM) to the timeline: a demo, a retake, or a
+clip exported from another Omareel recording. The video is copied into the bundle's `media/`
+directory (reflinked where the filesystem allows, so it takes no extra space) and placed at the
+playhead, splitting the clip there. Inserted clips play with their own sound, cut in and out
+without a transition, and show no cursor, zooms, keystrokes, or camera.
+
+Select an inserted clip to choose how it meets the frame: **Fit** shows all of it over a blurred
+copy of itself, **Fill** covers the frame, and **Framed** places it in the frame over the
+background, like the screen. Trim, split, speed, and delete work as for other clips; **Move
+earlier** and **Move later** move it past its neighbour. Recording clips keep their order. If an
+inserted video goes missing from `media/`, its clip is marked Missing and export stops until it
+is restored or deleted.
+
 ## Project bundle
 
 The bundle directory contains `screen.mp4`, its `screen.mp4.ts` first-frame timestamp,
-`capture.json`, `input.jsonl`, `project.json`, and `thumb.jpg`. Video remains unchanged while
+`capture.json`, `input.jsonl`, `project.json`, `thumb.jpg`, and `media/` with any inserted
+videos. Video remains unchanged while
 clip, style, cursor, and zoom edits are stored in `project.json`.
 
 ## Environment

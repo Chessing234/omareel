@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Shapes
+import QtQuick.Controls.impl
 import Omareel.Ui
 
 FocusScope {
@@ -178,29 +179,30 @@ FocusScope {
         width: root.labelWidth
         height: parent.height
         Repeater {
-            model: editor.hasCamera ? ["Clip", "Zoom", "Camera"] : ["Clip", "Zoom"]
-            delegate: Label {
-                required property string modelData
+            model: editor.hasCamera
+                ? [{name: "Clip", icon: "film.svg"}, {name: "Zoom", icon: "zoom-in.svg"}, {name: "Camera", icon: "camera.svg"}]
+                : [{name: "Clip", icon: "film.svg"}, {name: "Zoom", icon: "zoom-in.svg"}]
+            delegate: Row {
+                required property var modelData
                 required property int index
-                x: 0
-                y: 32 + index * 56
-                width: root.labelWidth
-                height: 48
-                leftPadding: 14
-                verticalAlignment: Text.AlignVCenter
-                text: modelData
-                color: theme.textFaint
-                font.pixelSize: theme.font.caption
-                font.weight: Font.Medium
-                font.capitalization: Font.AllUppercase
-                font.letterSpacing: .6
+                x: 10
+                y: 32 + index * 56 + (48 - height) / 2
+                spacing: 5
+                IconImage {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 12; height: 12
+                    source: "qrc:/omareel/assets/icons/lucide/" + modelData.icon
+                    sourceSize: Qt.size(12, 12)
+                    color: theme.textFaint
+                }
+                Label {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: modelData.name
+                    color: theme.textMuted
+                    font.pixelSize: theme.type.caption
+                    font.weight: Font.Medium
+                }
             }
-        }
-        Rectangle {
-            anchors.right: parent.right
-            width: 1
-            height: root.tracksBottom
-            color: theme.hairline
         }
     }
 
@@ -270,19 +272,20 @@ FocusScope {
                         height: ruler.height
                         Rectangle {
                             anchors.bottom: parent.bottom
+                            anchors.bottomMargin: 4
                             width: 1
-                            height: 9
-                            color: theme.hairlineStrong
+                            height: 6
+                            color: theme.strokeStrong
                         }
                         Loader {
                             active: true
-                            x: 5
-                            y: 5
+                            x: 4
+                            y: 6
                             sourceComponent: Text {
                                 text: root.formatRulerTime(tickDelegate.tickTime)
                                 color: theme.textFaint
-                                font.pixelSize: theme.font.caption
-                                font.family: theme.fontFamily
+                                font.pixelSize: theme.type.caption - 1
+                                font.family: theme.monoFamily
                             }
                         }
                     }
@@ -326,9 +329,10 @@ FocusScope {
             Rectangle {
                 x: 0
                 y: 32
-                width: parent.width
+                width: Math.max(parent.width, editor.duration * root.pixelsPerSecond)
                 height: 48
-                color: theme.normalFill
+                radius: theme.controlRadius
+                color: Qt.alpha(theme.foreground, theme.dark ? .025 : .035)
             }
             ClipTrack {
                 x: 0
@@ -405,11 +409,10 @@ FocusScope {
             Rectangle {
                 x: 0
                 y: 88
-                width: parent.width
+                width: Math.max(parent.width, editor.duration * root.pixelsPerSecond)
                 height: 48
-                color: theme.normalFill
-                border.width: 1
-                border.color: theme.normalBorder
+                radius: theme.controlRadius
+                color: Qt.alpha(theme.foreground, theme.dark ? .025 : .035)
             }
             ZoomTrack {
                 x: 0
@@ -426,9 +429,8 @@ FocusScope {
                 y: 144
                 width: parent.width
                 height: 48
-                color: theme.normalFill
-                border.width: 1
-                border.color: theme.normalBorder
+                radius: theme.controlRadius
+                color: Qt.alpha(theme.foreground, theme.dark ? .025 : .035)
             }
             Rectangle {
                 id: cameraBlock
@@ -437,10 +439,10 @@ FocusScope {
                 y: cameraHover.hovered ? 147 : 148
                 width: Math.max(20, editor.duration * root.pixelsPerSecond)
                 height: 40
-                radius: theme.radius
-                color: cameraHover.hovered ? theme.hoverFill : theme.normalFill
+                radius: theme.controlRadius
+                color: theme.fill
                 border.width: 1
-                border.color: cameraHover.hovered ? Qt.alpha(theme.accent, .72) : theme.normalBorder
+                border.color: cameraHover.hovered ? Qt.alpha(theme.accent, .8) : theme.stroke
                 clip: true
                 Behavior on y {
                     enabled: !editor.loading
@@ -476,9 +478,7 @@ FocusScope {
                             }
                             Rectangle {
                                 anchors.fill: parent
-                                color: "transparent"
-                                border.width: 1
-                                border.color: theme.accent
+                                color: Qt.alpha(theme.accent, .12)
                                 opacity: cameraHover.hovered ? 1 : 0
                                 Behavior on opacity {
                                     enabled: !editor.loading
@@ -499,26 +499,23 @@ FocusScope {
                             required property int index
                             width: (parent.width - 14) / 8
                             height: parent.height
-                            color: index % 2 ? theme.normalFill : theme.hoverFill
-                            border.width: cameraHover.hovered ? 1 : 0
-                            border.color: theme.accent
+                            color: index % 2 ? theme.fill : theme.fillHover
                         }
                     }
                 }
                 Rectangle {
                     anchors.left: parent.left; anchors.leftMargin: 8
                     anchors.verticalCenter: parent.verticalCenter
-                    width: cameraLabel.implicitWidth + 14
+                    width: cameraLabel.implicitWidth + 16
                     height: 22
-                    radius: theme.radius
-                    color: Qt.alpha(theme.surface, .82)
-                    border.width: 1; border.color: theme.hairline
+                    radius: theme.smallRadius
+                    color: Qt.alpha(theme.canvas, .78)
                     Label {
                         id: cameraLabel
                         anchors.centerIn: parent
                         text: "Camera"
-                        color: theme.foreground
-                        font.pixelSize: theme.font.caption
+                        color: theme.textStrong
+                        font.pixelSize: theme.type.caption
                         font.weight: Font.DemiBold
                     }
                 }
@@ -529,41 +526,45 @@ FocusScope {
                     onPressed: root.forceActiveFocus()
                     onClicked: root.cameraSelected()
                 }
-                ToolTip {
+                OmToolTip {
+                    target: cameraBlock
                     visible: cameraHover.hovered
-                    text: "Open Camera controls"
+                    text: "Camera settings"
                 }
             }
 
             Rectangle {
                 id: playhead
                 x: editor.playheadPosition * root.pixelsPerSecond - width / 2
-                y: 25
+                y: 22
                 width: playheadDrag.pressed ? 2 : 1.5
-                height: root.tracksBottom - y
+                height: root.tracksBottom - y + 4
                 color: theme.record
                 z: 20
                 Behavior on width {
                     enabled: !editor.loading
                     NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
                 }
+                // Tag-shaped head: a small block with a point that sits on the ruler.
                 Item {
                     id: playheadHead
-                    x: -5.25
-                    y: -1
-                    width: 12
-                    height: 8
-                    scale: playheadDrag.pressed ? 1.25 : playheadDrag.containsMouse ? 1.15 : 1
-                    transformOrigin: Item.Center
+                    readonly property real corner: theme.rounded ? 2.5 : 0
+                    x: -width / 2 + parent.width / 2
+                    y: -6
+                    width: 11
+                    height: 14
+                    scale: playheadDrag.pressed ? 1.2 : playheadDrag.containsMouse ? 1.12 : 1
+                    transformOrigin: Item.Bottom
                     Behavior on scale {
                         enabled: !editor.loading
-                        NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+                        NumberAnimation { duration: 180; easing.type: Easing.OutBack; easing.overshoot: 2 }
                     }
                     Rectangle {
-                        anchors.fill: parent
-                        anchors.margins: -6
-                        radius: height / 2
-                        color: Qt.alpha(theme.record, .30)
+                        anchors.centerIn: parent
+                        width: parent.width + 12
+                        height: parent.height + 10
+                        radius: theme.rounded ? 8 : 0
+                        color: Qt.alpha(theme.record, .25)
                         opacity: playheadDrag.pressed ? 1 : 0
                         Behavior on opacity {
                             enabled: !editor.loading
@@ -572,21 +573,25 @@ FocusScope {
                     }
                     Shape {
                         anchors.fill: parent
+                        preferredRendererType: Shape.CurveRenderer
                         ShapePath {
                             strokeWidth: 0
                             fillColor: theme.record
-                            startX: 0
-                            startY: 0
-                            PathLine { x: 12; y: 0 }
-                            PathLine { x: 6; y: 8 }
-                            PathLine { x: 0; y: 0 }
+                            startX: playheadHead.corner; startY: 0
+                            PathLine { x: 11 - playheadHead.corner; y: 0 }
+                            PathQuad { x: 11; y: playheadHead.corner; controlX: 11; controlY: 0 }
+                            PathLine { x: 11; y: 9 }
+                            PathLine { x: 5.5; y: 14 }
+                            PathLine { x: 0; y: 9 }
+                            PathLine { x: 0; y: playheadHead.corner }
+                            PathQuad { x: playheadHead.corner; y: 0; controlX: 0; controlY: 0 }
                         }
                     }
                 }
                 MouseArea {
                     id: playheadDrag
-                    x: -10; y: -6
-                    width: 21; height: 20
+                    x: -10; y: -8
+                    width: 21; height: 22
                     hoverEnabled: true
                     preventStealing: true
                     cursorShape: Qt.SizeHorCursor
@@ -605,9 +610,27 @@ FocusScope {
                     }
                     onReleased: mouse => { seekAt(mouse.x, mouse.y); editor.endScrub() }
                     onCanceled: editor.endScrub()
-                    ToolTip.visible: containsMouse
-                    ToolTip.text: editor.formatTime(editor.position)
-                    ToolTip.delay: 250
+                }
+                Rectangle {
+                    id: playheadTime
+                    x: 10
+                    y: -9
+                    width: playheadLabel.implicitWidth + 12
+                    height: 18
+                    radius: theme.smallRadius
+                    color: theme.record
+                    opacity: playheadDrag.pressed || playheadDrag.containsMouse ? 1 : 0
+                    visible: opacity > 0
+                    Behavior on opacity { NumberAnimation { duration: 140 } }
+                    Label {
+                        id: playheadLabel
+                        anchors.centerIn: parent
+                        text: editor.formatTime(editor.position)
+                        color: "white"
+                        font.family: theme.monoFamily
+                        font.pixelSize: theme.type.caption
+                        font.weight: Font.Medium
+                    }
                 }
             }
         }
@@ -618,22 +641,21 @@ FocusScope {
                 ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
             interactive: true
             height: 12
-            topPadding: 2
-            bottomPadding: 2
+            topPadding: 3
+            bottomPadding: 3
+            leftPadding: 4
+            rightPadding: 4
             minimumSize: Math.min(1, 32 / Math.max(1, width))
             opacity: 1
-            background: Rectangle {
-                width: parent.width
-                height: 1
-                y: (parent.height - height) / 2
-                color: theme.hairline
-            }
+            background: Item {}
             contentItem: Rectangle {
                 implicitWidth: 32
-                implicitHeight: 8
-                radius: theme.radius
-                color: horizontalBar.hovered || horizontalBar.pressed
-                    ? theme.foreground : theme.textFaint
+                implicitHeight: horizontalBar.hovered || horizontalBar.pressed ? 6 : 4
+                y: (horizontalBar.height - height) / 2
+                radius: theme.rounded ? height / 2 : 0
+                color: horizontalBar.pressed ? theme.textMuted
+                     : horizontalBar.hovered ? Qt.alpha(theme.foreground, .35) : Qt.alpha(theme.foreground, .18)
+                Behavior on implicitHeight { NumberAnimation { duration: 120 } }
                 Behavior on color {
                     enabled: !editor.loading
                     ColorAnimation { duration: 120; easing.type: Easing.OutCubic }

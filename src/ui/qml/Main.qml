@@ -11,7 +11,7 @@ ApplicationWindow {
     minimumWidth: 1100
     minimumHeight: 720
     font.family: theme.fontFamily
-    font.pixelSize: theme.font.body
+    font.pixelSize: theme.type.body
     color: theme.surface
     title: editor.bundleName + " — Omareel"
     property real timelineScale: 1
@@ -138,7 +138,7 @@ ApplicationWindow {
         Label {
             text: "Opening recording…"
             color: theme.textMuted
-            font.pixelSize: theme.font.body
+            font.pixelSize: theme.type.body
         }
     }
 
@@ -151,6 +151,7 @@ ApplicationWindow {
     Shortcut { sequence: "Shift+Right"; enabled: !window.singleKeyShortcutsBlocked; onActivated: editor.seek(editor.position + 1) }
     Shortcut { sequence: "S"; enabled: !window.singleKeyShortcutsBlocked; onActivated: editor.splitAtPlayhead() }
     Shortcut { sequence: "Z"; enabled: !window.singleKeyShortcutsBlocked; onActivated: editor.addZoomAt(editor.position) }
+    Shortcut { sequence: "I"; enabled: !window.singleKeyShortcutsBlocked; onActivated: bottomBar.openInsertDialog() }
     Shortcut {
         sequence: "Delete"
         enabled: !window.singleKeyShortcutsBlocked

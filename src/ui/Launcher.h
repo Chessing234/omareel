@@ -1,9 +1,12 @@
 #pragma once
 
 #include <QCameraDevice>
+#include <QMediaDevices>
 #include <QObject>
 #include <QTimer>
 #include <QVariantList>
+
+#include "MicrophoneMeter.h"
 
 class QProcess;
 
@@ -13,14 +16,17 @@ class Launcher : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(QString captureExclusionNote READ captureExclusionNote CONSTANT)
+    Q_PROPERTY(QString captureExclusionReason READ captureExclusionReason CONSTANT)
     Q_PROPERTY(QString selfViewStatus READ selfViewStatus NOTIFY selfViewStatusChanged)
     Q_PROPERTY(bool recording READ recording NOTIFY recordingChanged)
     Q_PROPERTY(bool startingRecording READ startingRecording NOTIFY startingRecordingChanged)
+    Q_PROPERTY(bool stoppingRecording READ stoppingRecording NOTIFY stoppingRecordingChanged)
     Q_PROPERTY(QString recordingElapsed READ recordingElapsed NOTIFY recordingElapsedChanged)
     Q_PROPERTY(bool systemAudio READ systemAudio WRITE setSystemAudio NOTIFY recordingPreferencesChanged)
     Q_PROPERTY(bool microphone READ microphone WRITE setMicrophone NOTIFY recordingPreferencesChanged)
     Q_PROPERTY(QString microphoneDevice READ microphoneDevice WRITE setMicrophoneDevice NOTIFY recordingPreferencesChanged)
     Q_PROPERTY(QVariantList audioDevices READ audioDevices NOTIFY audioDevicesChanged)
+    Q_PROPERTY(double microphoneLevel READ microphoneLevel NOTIFY microphoneLevelChanged)
     Q_PROPERTY(bool webcam READ webcam WRITE setWebcam NOTIFY recordingPreferencesChanged)
     Q_PROPERTY(QString webcamDevice READ webcamDevice WRITE setWebcamDevice NOTIFY recordingPreferencesChanged)
     Q_PROPERTY(int webcamHeight READ webcamHeight WRITE setWebcamHeight NOTIFY recordingPreferencesChanged)
@@ -35,14 +41,17 @@ class Launcher : public QObject
 public:
     explicit Launcher(QObject *parent = nullptr);
     QString captureExclusionNote() const { return m_captureExclusionNote; }
+    QString captureExclusionReason() const { return m_captureExclusionReason; }
     QString selfViewStatus() const { return m_selfViewStatus; }
     bool recording() const { return m_recording; }
     bool startingRecording() const { return m_startingRecording; }
+    bool stoppingRecording() const { return m_stoppingRecording; }
     QString recordingElapsed() const { return m_recordingElapsed; }
     bool systemAudio() const { return m_systemAudio; }
     bool microphone() const { return m_microphone; }
     QString microphoneDevice() const { return m_microphoneDevice; }
     QVariantList audioDevices() const { return m_audioDevices; }
+    double microphoneLevel() const { return m_microphoneMeter.level(); }
     bool webcam() const { return m_webcam; }
     QString webcamDevice() const { return m_webcamDevice; }
     int webcamHeight() const { return m_webcamHeight; }
@@ -77,9 +86,11 @@ signals:
     void selfViewStatusChanged();
     void recordingChanged();
     void startingRecordingChanged();
+    void stoppingRecordingChanged();
     void recordingElapsedChanged();
     void recordingPreferencesChanged();
     void audioDevicesChanged();
+    void microphoneLevelChanged();
     void webcamDevicesChanged();
     void quitRequested();
     void errorOccurred(const QString &message);
@@ -90,18 +101,23 @@ private:
     void refreshRecording();
     void startSelfViewHost();
     QString m_captureExclusionNote;
+    QString m_captureExclusionReason;
     QString m_selfViewStatus = QStringLiteral("Starting camera…");
     qint64 m_hostPid = 0;
     void saveRecordingPreferences();
     void refreshAudioDevices();
     void refreshWebcamDevices();
+    void updateMicrophoneMeter();
     bool m_recording = false;
     QString m_recordingElapsed = QStringLiteral("00:00");
     QTimer m_recordingTimer;
     bool m_systemAudio = true;
     bool m_microphone = true;
+    // The microphone recorded from: the one last picked while it is plugged in, else the default.
     QString m_microphoneDevice = QStringLiteral("default_input");
+    QString m_chosenMicrophoneDevice = QStringLiteral("default_input");
     QVariantList m_audioDevices;
+    MicrophoneMeter m_microphoneMeter;
     bool m_webcam = false;
     QString m_webcamDevice = QStringLiteral("/dev/video2");
     int m_webcamHeight = 1080;
@@ -111,7 +127,11 @@ private:
     QString m_selfViewSize = QStringLiteral("M");
     QVariantList m_webcamDevices;
     QList<QCameraDevice> m_cameraDevices;
+    QMediaDevices m_mediaDevices;
+    // The camera last picked, selected again whenever it is plugged in.
+    QString m_chosenWebcamDevice;
     bool m_startingRecording = false;
+    bool m_stoppingRecording = false;
     bool m_countdownBeforeRecording = false;
     bool m_quitWhenStarted = false;
     QProcess *m_recordingProcess = nullptr;

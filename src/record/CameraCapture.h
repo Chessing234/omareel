@@ -7,7 +7,10 @@
 #include <QString>
 #include <memory>
 
+#include <QList>
+
 class QCamera;
+class QCameraDevice;
 class QMediaCaptureSession;
 class QVideoSink;
 class QTimer;
@@ -37,6 +40,19 @@ struct CameraRawFrame {
 };
 CameraRawFrame packCameraFrame(QVideoFrame frame);
 qint64 cameraFrameDeadlineUs(qint64 firstFrameUs, qint64 frameNumber);
+// Whether the camera has a format CameraCapture records from (30 fps or more). IR sensors that
+// sit beside a laptop's webcam don't.
+bool cameraCanRecord(const QCameraDevice &device);
+// The path settings keep for a camera. /dev/videoN numbers follow the order cameras are plugged
+// in, so a dock reconnecting can swap them; this returns the camera's /dev/v4l/by-id link, or its
+// by-path link (USB port) when another node shares the by-id name, or the node when neither exists.
+QString stableCameraPath(const QString &devicePath, const QString &devRoot = QStringLiteral("/dev"),
+                         const QString &sysRoot = QStringLiteral("/sys"));
+// The /dev/videoN node a saved camera path refers to now, or empty when it isn't plugged in.
+QString cameraNodePath(const QString &path);
+// The /dev/videoN node named in a Qt camera id, or empty.
+QString cameraIdNode(const QByteArray &id);
+QCameraDevice cameraDeviceForPath(const QList<QCameraDevice> &devices, const QString &path);
 class CameraEncoder;
 
 class CameraCapture : public QObject

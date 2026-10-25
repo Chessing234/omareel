@@ -86,9 +86,9 @@ RecordingBar::RecordingBar(bool hidden, bool standby, qint64 owner, QObject *par
     m_cameraFlipHorizontal = state.value(QStringLiteral("camera_flip_horizontal")).toBool(false);
     {
         const auto prefs = RecordingPreferences::load();
-        const QString shape = prefs.webcam.value(QStringLiteral("shape")).toString(QStringLiteral("round"));
-        m_cameraShape = (shape == QLatin1String("rounded") || shape == QLatin1String("square"))
-            ? shape : QStringLiteral("round");
+        // The project's vocabulary: round, or square with a corner radius (0 for sharp corners).
+        m_cameraShape = prefs.webcam.value(QStringLiteral("shape")).toString() == QLatin1String("square")
+            ? QStringLiteral("square") : QStringLiteral("round");
         m_cameraRadius = qBound(0, prefs.webcam.value(QStringLiteral("radius")).toInt(16), 80);
     }
     m_selfViewVisible = state.value(QStringLiteral("selfview")).toBool(false);
@@ -179,6 +179,8 @@ void RecordingBar::poll()
             m_selfViewX = m_standbyPosition.x();
             m_selfViewY = m_standbyPosition.y();
             m_cameraRecordRequested = m_cameraStopRequested = false;
+            m_stopping = false;
+            emit stoppingChanged();
             emit captureStartedChanged();
             emit selfViewPlacementChanged();
             emit selfViewVisibilityChanged();
@@ -216,6 +218,11 @@ void RecordingBar::poll()
         && !property("captureStageLogged").toBool()) {
         setProperty("captureStageLogged", true);
         debugBarStage(QStringLiteral("capture_seen_by_bar"));
+    }
+    // Stop can also come from the keybind or the REC indicator.
+    if (state.value(QStringLiteral("stopping")).toBool(false) && !m_stopping) {
+        m_stopping = true;
+        emit stoppingChanged();
     }
     const bool countdownActive = state.value(QStringLiteral("countdown_active")).toBool(false);
     const qint64 countdownEndUs = state.value(QStringLiteral("countdown_end_us"))
@@ -272,6 +279,7 @@ void RecordingBar::poll()
         m_cameraStopRequested = true;
         m_cameraCapture->stop();
     }
+    if (m_stopping) return;
     const qint64 seconds = std::max<qint64>(0, barMonotonicUs() - Recorder::recordingStartedUs()) / 1000000;
     const QString elapsed = QStringLiteral("%1:%2").arg(seconds / 60, 2, 10, QLatin1Char('0'))
                                                    .arg(seconds % 60, 2, 10, QLatin1Char('0'));
@@ -283,9 +291,16 @@ void RecordingBar::poll()
 
 void RecordingBar::cycleCameraShape()
 {
-    m_cameraShape = m_cameraShape == QLatin1String("round") ? QStringLiteral("rounded")
-        : m_cameraShape == QLatin1String("rounded") ? QStringLiteral("square")
-                                                    : QStringLiteral("round");
+    // Round, then square with rounded corners, then square with sharp corners.
+    if (m_cameraShape == QLatin1String("round")) {
+        m_cameraShape = QStringLiteral("square");
+        if (m_cameraRadius == 0) m_cameraRadius = 16;
+    } else if (m_cameraRadius > 0) {
+        m_cameraRadius = 0;
+    } else {
+        m_cameraShape = QStringLiteral("round");
+        m_cameraRadius = 16;
+    }
     RecordingPreferences preferences = RecordingPreferences::load();
     preferences.webcam.insert(QStringLiteral("shape"), m_cameraShape);
     preferences.webcam.insert(QStringLiteral("radius"), m_cameraRadius);
@@ -432,7 +447,9 @@ void RecordingBar::setSelfViewVisible(bool visible)
 
 void RecordingBar::stop()
 {
-    Recorder::signalExisting(false);
+    if (m_stopping || !Recorder::signalExisting(false)) return;
+    m_stopping = true;
+    emit stoppingChanged();
 }
 
 void RecordingBar::cancel()
@@ -517,6 +534,7 @@ void RecordingBar::createCamera(const QJsonObject &state)
         bundle.isEmpty() ? QString() : bundle + QStringLiteral("/camera.mp4"),
         bundle.isEmpty() ? QString() : bundle + QStringLiteral("/camera.mp4.ts"), this);
     connect(m_cameraCapture.get(), &CameraCapture::readyChanged, this, [this] {
+        emit cameraReadyChanged();
         if (!m_cameraCapture->ready()) return;
         cameraState(QJsonObject{
             {QStringLiteral("camera_status"), QStringLiteral("ready")},
@@ -543,4 +561,10 @@ void RecordingBar::createCamera(const QJsonObject &state)
                 ? QStringLiteral("failed") : QStringLiteral("stopped")}
         });
     });
+    emit cameraReadyChanged();
+}
+
+bool RecordingBar::cameraReady() const
+{
+    return m_cameraCapture && m_cameraCapture->ready();
 }

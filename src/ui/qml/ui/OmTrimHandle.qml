@@ -37,7 +37,7 @@ Item {
         Rectangle {
             id: roundedCap
             anchors.fill: parent
-            radius: theme.radius
+            radius: theme.controlRadius
             color: capVisual.capColor
             Behavior on color {
                 enabled: !editor.loading

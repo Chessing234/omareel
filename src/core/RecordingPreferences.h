@@ -11,6 +11,8 @@ struct RecordingPreferences {
     QString microphoneDevice = QStringLiteral("default_input");
     bool webcamEnabled = false;
     QString webcamDevice = QStringLiteral("/dev/video2");
+    // The camera last picked in the launcher; webcamDevice stands in for it while it is unplugged.
+    QString webcamChosenDevice = webcamDevice;
     int webcamHeight = 1080;
     int webcamRotation = 0;
     bool webcamFlipHorizontal = false;
@@ -29,14 +31,14 @@ struct RecordingPreferences {
         {QStringLiteral("crop"), QStringLiteral("original")},
         {QStringLiteral("flipHorizontal"), false},
         {QStringLiteral("rotation"), 0},
-        {QStringLiteral("shadow"), QJsonObject{{QStringLiteral("enabled"), false},
-            {QStringLiteral("intensity"), 0.55}, {QStringLiteral("blur"), 18},
-            {QStringLiteral("distance"), 18}}},
-        {QStringLiteral("border"), QJsonObject{{QStringLiteral("enabled"), false},
-            {QStringLiteral("width"), 2}, {QStringLiteral("color"), QStringLiteral("#ffffff")},
+        {QStringLiteral("shadow"), QJsonObject{{QStringLiteral("enabled"), true},
+            {QStringLiteral("intensity"), 0.28}, {QStringLiteral("blur"), 23},
+            {QStringLiteral("distance"), 20}, {QStringLiteral("angle"), 45}}},
+        {QStringLiteral("border"), QJsonObject{{QStringLiteral("enabled"), true},
+            {QStringLiteral("width"), 6}, {QStringLiteral("color"), QStringLiteral("#ffffff")},
             {QStringLiteral("alpha"), 0.7}}},
         {QStringLiteral("scaleDuringZoom"), 0.7},
-        {QStringLiteral("offset"), QJsonObject{{QStringLiteral("x"), 0.02}, {QStringLiteral("y"), 0.02}}}
+        {QStringLiteral("offset"), QJsonObject{{QStringLiteral("x"), 0.035}, {QStringLiteral("y"), 0.035}}}
     };
 
     static QString path();

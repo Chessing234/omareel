@@ -1,3 +1,9 @@
-import Omareel.Ui
+import QtQuick
 
-OmSectionHeader { font.bold: false }
+Text {
+    textFormat: Text.PlainText
+    color: enabled ? theme.foreground : theme.textFaint
+    font.family: theme.fontFamily
+    font.pixelSize: theme.type.body
+    elide: Text.ElideRight
+}

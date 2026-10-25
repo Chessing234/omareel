@@ -1,5 +1,6 @@
 #include "Project.h"
 
+#include <QDir>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -31,6 +32,26 @@ QVector<double> Omareel::allowedClipSpeeds()
     return {0.5, 0.75, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 3.0, 4.0, 8.0, 16.0, 24.0};
 }
 
+QStringList Omareel::allowedClipLayouts()
+{
+    return {QStringLiteral("default"), QStringLiteral("camera"), QStringLiteral("screen")};
+}
+
+QStringList Omareel::allowedClipFits()
+{
+    return {QStringLiteral("fit"), QStringLiteral("fill"), QStringLiteral("framed")};
+}
+
+QString Omareel::sanitizedMediaPath(const QString &path)
+{
+    if (path.isEmpty() || QDir::isAbsolutePath(path) || path.contains(QLatin1Char('\\')))
+        return {};
+    const QString clean = QDir::cleanPath(path);
+    if (!clean.startsWith(QLatin1String("media/"))
+        || clean.split(QLatin1Char('/')).contains(QLatin1String(".."))) return {};
+    return clean;
+}
+
 QStringList Omareel::allowedAspects()
 {
     return {QStringLiteral("auto"), QStringLiteral("16:9"), QStringLiteral("1:1"),
@@ -54,7 +75,7 @@ QJsonObject Project::migrateDefaults(const QJsonObject &json, bool *changed)
     QJsonObject migrated = json;
     const int storedVersion = json.value(QStringLiteral("defaultsVersion")).toInt(0);
     bool didChange = storedVersion < CurrentDefaultsVersion;
-    if (storedVersion < CurrentDefaultsVersion) {
+    if (storedVersion < 2) {
         QJsonObject frame = migrated.value(QStringLiteral("frame")).toObject();
         const QJsonObject shadow = frame.value(QStringLiteral("shadow")).toObject();
         const double intensity = shadow.value(QStringLiteral("intensity"))
@@ -96,8 +117,49 @@ QJsonObject Project::migrateDefaults(const QJsonObject &json, bool *changed)
                 {QStringLiteral("alpha"), defaults.alpha}});
         }
         migrated.insert(QStringLiteral("frame"), frame);
-        migrated.insert(QStringLiteral("defaultsVersion"), CurrentDefaultsVersion);
     }
+    // Version 3 folds the camera's crop (square or original) into its shape. The old "rounded"
+    // and "square" shapes differed only in corners, so a sharp square is now a radius of 0.
+    if (storedVersion < 3 && migrated.value(QStringLiteral("camera")).isObject()) {
+        QJsonObject camera = migrated.value(QStringLiteral("camera")).toObject();
+        const QString shape = camera.value(QStringLiteral("shape")).toString(QStringLiteral("round"));
+        if (shape == QLatin1String("rounded") || shape == QLatin1String("square")) {
+            if (shape == QLatin1String("square")) camera.insert(QStringLiteral("radius"), 0);
+            camera.insert(QStringLiteral("shape"),
+                camera.value(QStringLiteral("crop")).toString() == QLatin1String("square")
+                    ? QStringLiteral("square") : QStringLiteral("rectangle"));
+        }
+        camera.remove(QStringLiteral("crop"));
+        migrated.insert(QStringLiteral("camera"), camera);
+    }
+    // Version 4 gives the camera a softer, wider shadow and border and measures its corner gap
+    // from the shorter side. Like version 2 it only replaces values nobody changed, and leaves
+    // the shadow and border switched on or off as they were.
+    if (storedVersion < 4 && migrated.value(QStringLiteral("camera")).isObject()) {
+        QJsonObject camera = migrated.value(QStringLiteral("camera")).toObject();
+        const Camera defaults;
+        QJsonObject shadow = camera.value(QStringLiteral("shadow")).toObject();
+        if (qFuzzyCompare(shadow.value(QStringLiteral("intensity")).toDouble(), 0.55)
+            && qFuzzyCompare(shadow.value(QStringLiteral("blur")).toDouble(), 18.0)
+            && qFuzzyCompare(shadow.value(QStringLiteral("distance")).toDouble(), 18.0)) {
+            shadow.insert(QStringLiteral("intensity"), defaults.shadow.intensity);
+            shadow.insert(QStringLiteral("blur"), defaults.shadow.blur);
+            shadow.insert(QStringLiteral("distance"), defaults.shadow.distance);
+            camera.insert(QStringLiteral("shadow"), shadow);
+        }
+        QJsonObject border = camera.value(QStringLiteral("border")).toObject();
+        if (qFuzzyCompare(border.value(QStringLiteral("width")).toDouble(), 2.0)) {
+            border.insert(QStringLiteral("width"), defaults.border.width);
+            camera.insert(QStringLiteral("border"), border);
+        }
+        const QJsonObject offset = camera.value(QStringLiteral("offset")).toObject();
+        if (qFuzzyCompare(offset.value(QStringLiteral("x")).toDouble(), 0.02)
+            && qFuzzyCompare(offset.value(QStringLiteral("y")).toDouble(), 0.02))
+            camera.insert(QStringLiteral("offset"), QJsonObject{
+                {QStringLiteral("x"), defaults.offset.x()}, {QStringLiteral("y"), defaults.offset.y()}});
+        migrated.insert(QStringLiteral("camera"), camera);
+    }
+    if (didChange) migrated.insert(QStringLiteral("defaultsVersion"), CurrentDefaultsVersion);
     if (changed) *changed = didChange;
     return migrated;
 }
@@ -118,8 +180,19 @@ Project Project::fromJson(const QJsonObject &root)
     p.clips.clear();
     for (const auto &value : source.value("clips").toArray()) {
         const auto o = value.toObject();
-        p.clips << Clip{o.value("id").toString(), o.value("in").toDouble(),
-                       o.value("out").toDouble(), o.value("speed").toDouble(1.0)};
+        Clip clip{o.value("id").toString(), o.value("in").toDouble(),
+                  o.value("out").toDouble(), o.value("speed").toDouble(1.0)};
+        const QString layout = o.value("layout").toString();
+        if (allowedClipLayouts().contains(layout)) clip.layout = layout;
+        // A media path that leaves media/ is dropped with its clip rather than read as footage
+        // of the recording.
+        if (o.contains("media")) {
+            clip.media = sanitizedMediaPath(o.value("media").toString());
+            if (clip.media.isEmpty()) continue;
+            const QString fit = o.value("fit").toString();
+            if (allowedClipFits().contains(fit)) clip.fit = fit;
+        }
+        p.clips << clip;
     }
     p.zooms.clear();
     for (const auto &value : source.value("zooms").toArray()) {
@@ -215,13 +288,10 @@ Project Project::fromJson(const QJsonObject &root)
     p.camera.position = camera.value("position").toString("bottom-right");
     p.camera.size = camera.value("size").toDouble(0.25);
     const QString cameraShape = camera.value("shape").toString("round");
-    if (cameraShape == QLatin1String("round") || cameraShape == QLatin1String("rounded")
-        || cameraShape == QLatin1String("square"))
+    if (cameraShape == QLatin1String("round") || cameraShape == QLatin1String("square")
+        || cameraShape == QLatin1String("rectangle"))
         p.camera.shape = cameraShape;
     p.camera.radius = camera.value("radius").toDouble(16.0);
-    const QString cameraCrop = camera.value("crop").toString("original");
-    if (cameraCrop == QLatin1String("square") || cameraCrop == QLatin1String("original"))
-        p.camera.crop = cameraCrop;
     p.camera.flipHorizontal = camera.contains("flipHorizontal")
         ? camera.value("flipHorizontal").toBool(false)
         : camera.value("mirror").toBool(false);
@@ -232,23 +302,26 @@ Project Project::fromJson(const QJsonObject &root)
     const QJsonValue cameraShadowValue = camera.value("shadow");
     if (cameraShadowValue.isObject()) {
         const QJsonObject cameraShadow = cameraShadowValue.toObject();
-        p.camera.shadow.enabled = cameraShadow.value("enabled").toBool(false);
-        p.camera.shadow.intensity = cameraShadow.value("intensity").toDouble(0.55);
-        p.camera.shadow.blur = cameraShadow.value("blur").toDouble(18.0);
-        p.camera.shadow.distance = cameraShadow.value("distance").toDouble(18.0);
+        p.camera.shadow.enabled = cameraShadow.value("enabled").toBool(p.camera.shadow.enabled);
+        p.camera.shadow.intensity = cameraShadow.value("intensity").toDouble(p.camera.shadow.intensity);
+        p.camera.shadow.blur = cameraShadow.value("blur").toDouble(p.camera.shadow.blur);
+        p.camera.shadow.distance = cameraShadow.value("distance").toDouble(p.camera.shadow.distance);
+        p.camera.shadow.angle = cameraShadow.value("angle").toDouble(p.camera.shadow.angle);
     } else {
-        p.camera.shadow.enabled = cameraShadowValue.toBool(false);
+        p.camera.shadow.enabled = cameraShadowValue.toBool(p.camera.shadow.enabled);
     }
     const QJsonObject cameraBorder = (camera.contains("border")
         ? camera.value("border") : camera.value("inset")).toObject();
-    p.camera.border.enabled = cameraBorder.value("enabled").toBool(false);
-    p.camera.border.width = cameraBorder.value("width").toDouble(2.0);
-    p.camera.border.color = parseColor(cameraBorder.value("color"), Qt::white);
-    p.camera.border.alpha = cameraBorder.value("alpha").toDouble(0.7);
+    p.camera.border.enabled = cameraBorder.value("enabled").toBool(p.camera.border.enabled);
+    p.camera.border.width = cameraBorder.value("width").toDouble(p.camera.border.width);
+    p.camera.border.color = parseColor(cameraBorder.value("color"), p.camera.border.color);
+    p.camera.border.alpha = cameraBorder.value("alpha").toDouble(p.camera.border.alpha);
     p.camera.scaleDuringZoom = camera.value("scaleDuringZoom").toDouble(0.7);
     const auto cameraOffset = camera.value("offset").toObject();
-    p.camera.offset = QPointF(cameraOffset.value("x").toDouble(0.02),
-                              cameraOffset.value("y").toDouble(0.02));
+    p.camera.offset = QPointF(cameraOffset.value("x").toDouble(p.camera.offset.x()),
+                              cameraOffset.value("y").toDouble(p.camera.offset.y()));
+    if (camera.value("fullFrame").toString() == QLatin1String("square"))
+        p.camera.fullFrame = QStringLiteral("square");
     const auto e = source.value("export").toObject();
     p.exportSettings.format = e.value("format").toString("mp4");
     p.exportSettings.fps = e.value("fps").toInt(60);
@@ -265,7 +338,16 @@ Project Project::fromJson(const QJsonObject &root)
 QJsonObject Project::toJson() const
 {
     QJsonArray clipArray;
-    for (const auto &c : clips) clipArray << QJsonObject{{"id", c.id}, {"in", c.in}, {"out", c.out}, {"speed", c.speed}};
+    for (const auto &c : clips) {
+        QJsonObject clip{{"id", c.id}, {"in", c.in}, {"out", c.out}, {"speed", c.speed}};
+        // Clips that keep the default layout stay as they were written before layouts existed.
+        if (c.layout != QLatin1String("default")) clip.insert("layout", c.layout);
+        if (c.isMedia()) {
+            clip.insert("media", c.media);
+            clip.insert("fit", c.fit);
+        }
+        clipArray << clip;
+    }
     QJsonArray zoomArray;
     for (const auto &z : zooms) {
         QJsonValue target = z.automaticTarget ? QJsonValue(QStringLiteral("auto"))
@@ -303,16 +385,16 @@ QJsonObject Project::toJson() const
         {"audio", QJsonObject{{"desktop", audio.desktop}, {"mic", audio.mic}, {"volume", audio.volume}}},
         {"camera", QJsonObject{{"enabled", camera.enabled}, {"position", camera.position},
             {"size", camera.size}, {"shape", camera.shape}, {"radius", camera.radius},
-            {"crop", camera.crop}, {"flipHorizontal", camera.flipHorizontal},
+            {"flipHorizontal", camera.flipHorizontal},
             {"rotation", camera.rotation},
             {"shadow", QJsonObject{{"enabled", camera.shadow.enabled},
                 {"intensity", camera.shadow.intensity}, {"blur", camera.shadow.blur},
-                {"distance", camera.shadow.distance}}},
+                {"distance", camera.shadow.distance}, {"angle", camera.shadow.angle}}},
             {"border", QJsonObject{{"enabled", camera.border.enabled},
                 {"width", camera.border.width}, {"color", camera.border.color.name(QColor::HexRgb)},
                 {"alpha", camera.border.alpha}}},
             {"scaleDuringZoom", camera.scaleDuringZoom}, {"offset", QJsonObject{{"x", camera.offset.x()},
-                {"y", camera.offset.y()}}}}},
+                {"y", camera.offset.y()}}}, {"fullFrame", camera.fullFrame}}},
         {"export", QJsonObject{{"format", exportSettings.format}, {"fps", exportSettings.fps}, {"height", exportSettings.height},
             {"quality", exportSettings.quality}, {"gif", QJsonObject{{"fps", exportSettings.gif.fps}, {"height", exportSettings.gif.height},
                 {"quality", exportSettings.gif.quality}, {"loop", exportSettings.gif.loop}}}}}};

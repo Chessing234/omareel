@@ -3,10 +3,12 @@
 #include "EncoderPipe.h"
 #include "FfmpegDecoder.h"
 #include "FrameSource.h"
+#include "MediaProbe.h"
 #include "core/ClipTimeline.h"
 #include "core/CameraTimeline.h"
 #include "core/InputLog.h"
 #include "core/KeystrokeTrack.h"
+#include "core/LayoutTimeline.h"
 #include "core/MotionTrack.h"
 #include "core/OmarchyPaths.h"
 #include "core/Project.h"
@@ -18,6 +20,7 @@
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QOffscreenSurface>
@@ -38,6 +41,7 @@
 #include <QScopeGuard>
 #include <QTemporaryFile>
 #include <QTextStream>
+#include <algorithm>
 #include <cmath>
 #include <array>
 #include <cstring>
@@ -136,7 +140,7 @@ static QVector<double> clickOutputTimes(const InputLog &input, const QVector<Cli
     const QVector<InputEvent> clicks = input.clickDowns();
     for (const Clip &clip : clips) {
         for (const InputEvent &click : clicks) {
-            if (click.time < clip.in || click.time >= clip.out) continue;
+            if (clip.isMedia() || click.time < clip.in || click.time >= clip.out) continue;
             result << outputStart + (click.time - clip.in) / clip.speed;
             if (result.size() == 200) return result;
         }
@@ -145,26 +149,38 @@ static QVector<double> clickOutputTimes(const InputLog &input, const QVector<Cli
     return result;
 }
 
-static QString audioFilter(const QVector<Clip> &clips, double volume,
-                           bool sourceAudio, int sourceInput,
+// A clip's audio, brought to one format and to exactly the clip's output length, so a source
+// with other rates or channels, or audio that ends early, cannot shift the clips after it.
+static QString audioSegment(const QString &source, double speed, double length)
+{
+    return source + QStringLiteral(",aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,"
+                                   "%1,apad=whole_dur=%2,atrim=end=%2").arg(atempo(speed)).arg(length, 0, 'f', 6);
+}
+
+static QString silentSegment(double length)
+{
+    return QStringLiteral("anullsrc=r=48000:cl=stereo,atrim=duration=%1,"
+                          "aformat=sample_fmts=fltp:channel_layouts=stereo").arg(length, 0, 'f', 6);
+}
+
+// segments holds one filter chain per clip, in output order (see audioSegment), or is empty
+// when no clip has audio.
+static QString audioFilter(const QStringList &segments, double volume,
                            const QVector<double> &clicks, int clickInput,
                            double outputDuration)
 {
     QString filter;
     QStringList mixLabels;
-    if (sourceAudio) {
+    if (!segments.isEmpty()) {
         QStringList clipLabels;
-        for (int i = 0; i < clips.size(); ++i) {
-            const auto &clip = clips[i];
+        for (int i = 0; i < segments.size(); ++i) {
             const QString label = QStringLiteral("a%1").arg(i);
-            filter += QStringLiteral("[%1:a]atrim=start=%2:end=%3,asetpts=PTS-STARTPTS,%4[%5];")
-                .arg(sourceInput).arg(clip.in, 0, 'f', 6).arg(clip.out, 0, 'f', 6)
-                .arg(atempo(clip.speed), label);
+            filter += segments[i] + QStringLiteral("[%1];").arg(label);
             clipLabels << QStringLiteral("[%1]").arg(label);
         }
         filter += clipLabels.join(QString())
             + QStringLiteral("concat=n=%1:v=0:a=1,volume=%2[source];")
-                .arg(clips.size()).arg(volume, 0, 'g', 8);
+                .arg(segments.size()).arg(volume, 0, 'g', 8);
         mixLabels << QStringLiteral("[source]");
     }
     if (!clicks.isEmpty()) {
@@ -262,8 +278,8 @@ bool Exporter::run(const ExportOptions &options, QString *error)
             project.camera.flipHorizontal = camera
                 .value(QStringLiteral("flipHorizontal")).toBool(false);
             const QString shape = camera.value(QStringLiteral("shape")).toString(QStringLiteral("round"));
-            if (shape == QLatin1String("round") || shape == QLatin1String("rounded")
-                    || shape == QLatin1String("square"))
+            if (shape == QLatin1String("round") || shape == QLatin1String("square")
+                    || shape == QLatin1String("rectangle"))
                 project.camera.shape = shape;
             project.camera.radius = camera.value(QStringLiteral("radius")).toDouble(16.0);
         }
@@ -278,6 +294,17 @@ bool Exporter::run(const ExportOptions &options, QString *error)
     ClipTimeline timeline(project.clips);
     const double outputDuration = timeline.totalDuration();
     if (outputDuration <= 0.0) { if (error) *error = QStringLiteral("Project has no exportable clips"); return false; }
+    QHash<QString, VideoInfo> inserts;
+    for (const Clip &clip : std::as_const(project.clips)) {
+        if (!clip.isMedia() || inserts.contains(clip.media)) continue;
+        QString insertError;
+        const VideoInfo info = probeVideo(bundle.filePath(clip.media), &insertError);
+        if (!info.isValid()) {
+            if (error) *error = QStringLiteral("Inserted clip: %1").arg(insertError);
+            return false;
+        }
+        inserts.insert(clip.media, info);
+    }
 
     QString inputError;
     const auto input = InputLog::loadBundle(bundle.absolutePath(), media.duration, &inputError);
@@ -299,7 +326,11 @@ bool Exporter::run(const ExportOptions &options, QString *error)
     }
     QString cameraProbeError;
     const MediaInfo cameraMedia = QFileInfo(cameraPath).isFile() ? probe(cameraPath, &cameraProbeError) : MediaInfo{};
-    const bool cameraEnabled = project.camera.enabled && cameraMedia.width > 0;
+    const bool cameraFullFrame = std::any_of(project.clips.cbegin(), project.clips.cend(),
+        [](const Clip &clip) { return clip.layout == QLatin1String("camera"); });
+    // Camera clips show the webcam even when its bubble is switched off.
+    const bool cameraEnabled = cameraMedia.width > 0
+        && (project.camera.enabled || cameraFullFrame);
     const MotionTrack motion = MotionTrack::build(media.duration, media.width, media.height,
                                                    input.events(), project, captureFps);
     const KeystrokeTrack keystrokes = KeystrokeTrack::build(input.events(), project.keystrokes);
@@ -328,8 +359,16 @@ bool Exporter::run(const ExportOptions &options, QString *error)
                                                    neededHeight / media.height), 0.01, 1.0);
     const int decodeWidth = std::min(media.width, std::max(2, qRound(media.width * decodeScale / 2.0) * 2));
     const int decodeHeight = std::min(media.height, std::max(2, qRound(media.height * decodeScale / 2.0) * 2));
+    // A bubble needs a fraction of the output height; a full-frame camera has to cover the
+    // output once rotated.
+    const bool cameraQuarterTurn = project.camera.rotation == 90 || project.camera.rotation == 270;
+    const double cameraDisplayWidth = cameraQuarterTurn ? cameraMedia.height : cameraMedia.width;
+    const double cameraDisplayHeight = cameraQuarterTurn ? cameraMedia.width : cameraMedia.height;
     const double cameraDecodeScale = cameraEnabled
-        ? std::clamp(height * project.camera.size * 1.5 / cameraMedia.height, 0.01, 1.0) : 1.0;
+        ? std::clamp(std::max(height * project.camera.size * 1.5 / cameraDisplayHeight,
+                              cameraFullFrame ? std::max(width / cameraDisplayWidth,
+                                                         height / cameraDisplayHeight) : 0.0),
+                     0.01, 1.0) : 1.0;
     const int cameraDecodeWidth = cameraEnabled
         ? std::min(cameraMedia.width, std::max(2, qRound(cameraMedia.width * cameraDecodeScale / 2.0) * 2)) : 0;
     const int cameraDecodeHeight = cameraEnabled
@@ -386,6 +425,10 @@ bool Exporter::run(const ExportOptions &options, QString *error)
     state.project = projectMap(project);
     state.zoom = {{QStringLiteral("scale"), 1.0}, {QStringLiteral("cx"), 0.5},
         {QStringLiteral("cy"), 0.5}, {QStringLiteral("velocity"), 0.0}};
+    state.layout = {{QStringLiteral("cameraFull"), 0.0}, {QStringLiteral("bubble"), 1.0}};
+    state.media = {{QStringLiteral("active"), false}, {QStringLiteral("ready"), true},
+        {QStringLiteral("fit"), QStringLiteral("fit")}, {QStringLiteral("width"), 16},
+        {QStringLiteral("height"), 9}};
     state.cursor = {{QStringLiteral("x"), 0.5}, {QStringLiteral("y"), 0.5},
         {QStringLiteral("visible"), project.cursor.visible}, {QStringLiteral("scale"), 1.0},
         {QStringLiteral("opacity"), project.cursor.visible ? 1.0 : 0.0}, {QStringLiteral("rotation"), 0.0}};
@@ -405,6 +448,8 @@ bool Exporter::run(const ExportOptions &options, QString *error)
     if (!frameSource) { if (error) *error = QStringLiteral("Composition has no FrameSource"); return false; }
     auto *cameraFrameSource = rootItem->findChild<FrameSource *>(QStringLiteral("cameraFrameSource"));
     if (!cameraFrameSource) { if (error) *error = QStringLiteral("Composition has no camera FrameSource"); return false; }
+    auto *mediaFrameSource = rootItem->findChild<FrameSource *>(QStringLiteral("mediaFrameSource"));
+    if (!mediaFrameSource) { if (error) *error = QStringLiteral("Composition has no inserted-clip FrameSource"); return false; }
 
     QString runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
     if (runtime.isEmpty() || !QFileInfo(runtime).isWritable()) runtime = QDir::tempPath();
@@ -433,10 +478,36 @@ bool Exporter::run(const ExportOptions &options, QString *error)
         int nextInput = 1;
         int sourceInput = -1;
         int clickInput = -1;
-        if (useSourceAudio) {
-            sourceInput = nextInput++;
-            encoderArgs << QStringLiteral("-i") << videoPath;
+        // One audio segment per clip: the recording's audio, an inserted video's own audio, or
+        // silence. Each inserted clip opens its file at its in point, so containers that do not
+        // start at zero need no timestamp arithmetic.
+        QStringList audioSegments;
+        bool anyAudio = false;
+        for (const Clip &clip : std::as_const(project.clips)) {
+            const double length = (clip.out - clip.in) / clip.speed;
+            if (clip.isMedia() && inserts.value(clip.media).audio) {
+                const int input = nextInput++;
+                encoderArgs << QStringLiteral("-ss") << QString::number(clip.in, 'f', 6)
+                            << QStringLiteral("-t") << QString::number(clip.out - clip.in, 'f', 6)
+                            << QStringLiteral("-i") << bundle.filePath(clip.media);
+                audioSegments << audioSegment(QStringLiteral("[%1:a:0]asetpts=PTS-STARTPTS").arg(input),
+                                              clip.speed, length);
+                anyAudio = true;
+            } else if (!clip.isMedia() && useSourceAudio) {
+                if (sourceInput < 0) {
+                    sourceInput = nextInput++;
+                    encoderArgs << QStringLiteral("-i") << videoPath;
+                }
+                audioSegments << audioSegment(
+                    QStringLiteral("[%1:a:0]atrim=start=%2:end=%3,asetpts=PTS-STARTPTS")
+                        .arg(sourceInput).arg(clip.in, 0, 'f', 6).arg(clip.out, 0, 'f', 6),
+                    clip.speed, length);
+                anyAudio = true;
+            } else {
+                audioSegments << silentSegment(length);
+            }
         }
+        if (!anyAudio) audioSegments.clear();
         if (useClicks) {
             QFile resource(QStringLiteral(":/omareel/assets/sounds/click.wav"));
             if (!resource.open(QIODevice::ReadOnly) || !clickFile.open()) {
@@ -452,10 +523,9 @@ bool Exporter::run(const ExportOptions &options, QString *error)
             clickInput = nextInput++;
             encoderArgs << QStringLiteral("-i") << clickFile.fileName();
         }
-        if (useSourceAudio || useClicks)
+        if (anyAudio || useClicks)
             encoderArgs << QStringLiteral("-filter_complex")
-                           << audioFilter(project.clips, project.audio.volume,
-                                          useSourceAudio, sourceInput, clickTimes,
+                           << audioFilter(audioSegments, project.audio.volume, clickTimes,
                                           clickInput, outputDuration)
                            << QStringLiteral("-map") << QStringLiteral("0:v:0")
                            << QStringLiteral("-map") << QStringLiteral("[aout]")
@@ -601,7 +671,21 @@ bool Exporter::run(const ExportOptions &options, QString *error)
         glExtra->glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     }
 
-    struct DecodedPacket { QImage image; QImage cameraImage; QString error; };
+    // An inserted clip decodes at the size that covers the output, never larger than itself.
+    const auto insertDecodeSize = [width, height](const VideoInfo &info) {
+        const double scale = std::clamp(std::max(width / double(info.width),
+                                                 height / double(info.height)), 0.01, 1.0);
+        return QSize(std::max(2, qRound(info.width * scale / 2.0) * 2),
+                     std::max(2, qRound(info.height * scale / 2.0) * 2));
+    };
+    // clip says which of image (the recording) and insertImage the frame shows.
+    struct DecodedPacket {
+        QImage image;
+        QImage cameraImage;
+        QString error;
+        int clip = -1;
+        QImage insertImage;
+    };
     std::mutex decodeMutex;
     std::condition_variable decodeReady;
     std::condition_variable decodeSpace;
@@ -612,7 +696,10 @@ bool Exporter::run(const ExportOptions &options, QString *error)
         FfmpegDecoder decoder;
         FfmpegDecoder cameraDecoder;
         int activeClip = -1;
+        // The last frame of the recording and of the current inserted clip, kept apart so a
+        // clip that runs out of frames repeats its own last frame, never the other's.
         QImage decoded;
+        QImage insertDecoded;
         QImage cameraDecoded;
         int cameraFrame = -1;
         bool cameraEof = false;
@@ -632,23 +719,26 @@ bool Exporter::run(const ExportOptions &options, QString *error)
         }
         for (int frame = 0; frame < totalFrames && !stopDecode && !m_cancelled; ++frame) {
             const double outputTime = frame / double(fps);
-            double clipOutputStart = 0.0;
-            int clipIndex = project.clips.size() - 1;
-            for (int i = 0; i < project.clips.size(); ++i) {
-                const double length = (project.clips[i].out - project.clips[i].in) / project.clips[i].speed;
-                if (outputTime < clipOutputStart + length || i == project.clips.size() - 1) {
-                    clipIndex = i;
-                    break;
-                }
-                clipOutputStart += length;
-            }
+            const int clipIndex = timeline.clipAt(outputTime);
             const auto &clip = project.clips[clipIndex];
             QString decodeError;
             if (clipIndex != activeClip) {
-                if (!decoder.start(videoPath, clip.in, clip.out - clip.in, fps / clip.speed,
-                                   decodeWidth, decodeHeight,
-                                   decodeWidth != media.width || decodeHeight != media.height,
-                                   &decodeError)) {
+                bool started = false;
+                if (clip.isMedia()) {
+                    const QSize size = insertDecodeSize(inserts.value(clip.media));
+                    insertDecoded = QImage();
+                    // Always scaled: the filter fixes the frame size whatever rotation or sample
+                    // aspect the file carries.
+                    started = decoder.start(bundle.filePath(clip.media), clip.in, clip.out - clip.in,
+                                            fps / clip.speed, size.width(), size.height(), true,
+                                            &decodeError);
+                } else {
+                    started = decoder.start(videoPath, clip.in, clip.out - clip.in, fps / clip.speed,
+                                            decodeWidth, decodeHeight,
+                                            decodeWidth != media.width || decodeHeight != media.height,
+                                            &decodeError);
+                }
+                if (!started) {
                     std::lock_guard lock(decodeMutex);
                     decodeQueue.push_back({{}, {}, decodeError});
                     break;
@@ -656,14 +746,15 @@ bool Exporter::run(const ExportOptions &options, QString *error)
                 activeClip = clipIndex;
             }
             QImage next;
-            if (decoder.readFrame(&next, &decodeError)) decoded = std::move(next);
-            else if (decoded.isNull()) {
+            QImage &shown = clip.isMedia() ? insertDecoded : decoded;
+            if (decoder.readFrame(&next, &decodeError)) shown = std::move(next);
+            else if (shown.isNull()) {
                 std::lock_guard lock(decodeMutex);
                 decodeQueue.push_back({{}, {}, decodeError.isEmpty()
                     ? QStringLiteral("Decoder ended before the first frame") : decodeError});
                 break;
             }
-            if (cameraEnabled) {
+            if (cameraEnabled && !clip.isMedia()) {
                 const double screenSourceTime = timeline.sourceTime(outputTime);
                 const CameraTime mapped = mapCameraTime(screenSourceTime, cameraOffset,
                                                         cameraMedia.duration);
@@ -701,7 +792,7 @@ bool Exporter::run(const ExportOptions &options, QString *error)
             std::unique_lock lock(decodeMutex);
             decodeSpace.wait(lock, [&] { return decodeQueue.size() < 3 || stopDecode || m_cancelled; });
             if (stopDecode || m_cancelled) break;
-            decodeQueue.push_back({decoded, cameraDecoded, {}});
+            decodeQueue.push_back({decoded, cameraDecoded, {}, clipIndex, insertDecoded});
             lock.unlock();
             decodeReady.notify_one();
         }
@@ -778,15 +869,18 @@ bool Exporter::run(const ExportOptions &options, QString *error)
         }
         decodeSpace.notify_one();
         decodeNs += stageTimer.nsecsElapsed();
-        if (packet.image.isNull()) {
+        const Clip *clip = packet.clip >= 0 ? &project.clips[packet.clip] : nullptr;
+        const bool insert = clip && clip->isMedia();
+        if (!clip || (insert ? packet.insertImage : packet.image).isNull()) {
             pipelineError = !packet.error.isEmpty() ? packet.error
                           : m_cancelled ? QStringLiteral("Export cancelled")
                           : QStringLiteral("Decoder ended unexpectedly");
             break;
         }
 
-        const double sourceTime = timeline.sourceTime(outputTime);
-        const MotionSample sample = motion.sample(sourceTime);
+        // An inserted clip shows none of the recording's motion, cursor, keys, or camera.
+        const double sourceTime = timeline.recordingSourceTime(outputTime);
+        const MotionSample sample = insert ? MotionSample{} : motion.sample(sourceTime);
         state.time = sourceTime;
         state.zoom = {{QStringLiteral("scale"), sample.zoomScale}, {QStringLiteral("cx"), sample.zoomCx},
             {QStringLiteral("cy"), sample.zoomCy},
@@ -795,21 +889,35 @@ bool Exporter::run(const ExportOptions &options, QString *error)
             {QStringLiteral("visible"), project.cursor.visible}, {QStringLiteral("scale"), sample.cursorScale},
             {QStringLiteral("opacity"), sample.cursorOpacity}, {QStringLiteral("rotation"), sample.cursorRotation}};
         state.ripples.clear();
-        if (project.cursor.clickEffect == QLatin1String("ripple") || project.cursor.clickEffect == QLatin1String("circle")) {
+        if (!insert && (project.cursor.clickEffect == QLatin1String("ripple")
+                        || project.cursor.clickEffect == QLatin1String("circle"))) {
             for (const auto &ripple : motion.ripples(sourceTime))
                 state.ripples << QVariantMap{{QStringLiteral("x"), ripple.x}, {QStringLiteral("y"), ripple.y},
                                              {QStringLiteral("progress"), ripple.progress}};
         }
         state.keystrokePills.clear();
-        for (const KeystrokePill &pill : keystrokes.sample(sourceTime))
+        for (const KeystrokePill &pill : insert ? QVector<KeystrokePill>{} : keystrokes.sample(sourceTime))
             state.keystrokePills << QVariantMap{{QStringLiteral("keys"), pill.keys},
                 {QStringLiteral("text"), pill.text}, {QStringLiteral("opacity"), pill.opacity}};
+        const LayoutSample layout = sampleLayout(project.clips, outputTime, cameraMedia.width > 0,
+                                                 project.camera.enabled);
+        state.layout = {{QStringLiteral("cameraFull"), layout.cameraFull},
+                        {QStringLiteral("bubble"), layout.bubble}};
         const CameraTime cameraTime = mapCameraTime(sourceTime, cameraOffset, cameraMedia.duration);
-        state.cameraVisible = !cameraTime.beforeStart;
+        state.cameraVisible = !insert && (!cameraTime.beforeStart || layout.cameraFull > 0.0);
+        if (insert) {
+            const VideoInfo info = inserts.value(clip->media);
+            state.media = {{QStringLiteral("active"), true}, {QStringLiteral("ready"), true},
+                {QStringLiteral("fit"), clip->fit}, {QStringLiteral("width"), info.width},
+                {QStringLiteral("height"), info.height}};
+        } else {
+            state.media.insert(QStringLiteral("active"), false);
+        }
         state.notifyChanged();
         stageTimer.restart();
-        frameSource->setImage(packet.image);
-        if (cameraEnabled && !packet.cameraImage.isNull())
+        if (insert) mediaFrameSource->setImage(packet.insertImage);
+        else frameSource->setImage(packet.image);
+        if (cameraEnabled && !insert && !packet.cameraImage.isNull())
             cameraFrameSource->setImage(packet.cameraImage);
         processEvents();
         uploadNs += stageTimer.nsecsElapsed();

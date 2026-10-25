@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.impl
 import Omareel.Ui
 
 Item {
@@ -130,6 +131,7 @@ Item {
             border.width: theme.normalBorderWidth
             border.color: theme.normalBorder
             clip: false
+            HoverHandler { id: clipHover }
             Item {
                 id: filmstrip
                 anchors.fill: parent
@@ -154,7 +156,7 @@ Item {
                             const revision = editor.videoThumbnailRevision
                             const sourceTime = clipBlock.displayedIn
                                 + (x + width / 2) / root.pixelsPerSecond * clipBlock.modelData.speed
-                            return editor.videoThumbnailUrlForClip(sourceTime,
+                            return editor.clipThumbnailUrl(clipBlock.modelData.id, sourceTime,
                                 clipBlock.displayedIn, clipBlock.displayedOut)
                         }
                     }
@@ -163,10 +165,16 @@ Item {
             Rectangle {
                 anchors.fill: parent
                 z: 2
-                color: "transparent"
-                border.width: 1
-                border.color: clipBlock.selected ? theme.accent : theme.normalBorder
+                color: modelData.missing ? Qt.alpha(theme.record, .35)
+                    : clipBlock.selected ? Qt.alpha(theme.accent, .14) : "transparent"
+                border.width: clipBlock.selected ? 1.5 : 1
+                border.color: clipBlock.selected ? theme.accent
+                    : clipHover.hovered ? Qt.alpha(theme.accent, .7) : theme.normalBorder
                 radius: 0
+                Behavior on border.color {
+                    enabled: !editor.loading
+                    ColorAnimation { duration: 120; easing.type: Easing.OutCubic }
+                }
             }
             MouseArea {
                 id: clipBody
@@ -226,33 +234,55 @@ Item {
                 z: 3
                 anchors.centerIn: parent
                 visible: clipBlock.width >= 68
-                width: Math.min(parent.width - 16, clipLabel.implicitWidth + 16)
+                width: Math.min(parent.width - 16, clipLabelRow.implicitWidth + 16)
                 height: 24
                 opacity: leftTrim.engaged || rightTrim.engaged ? .60 : 1
-                radius: theme.radius
-                color: Qt.alpha(theme.surface, .80)
-                border.width: 1
-                border.color: theme.hairline
+                radius: theme.smallRadius
+                color: badgeMouse.containsMouse ? Qt.alpha(theme.canvas, .9) : Qt.alpha(theme.canvas, .7)
+                Behavior on color { ColorAnimation { duration: 120 } }
                 Behavior on opacity {
                     enabled: !editor.loading
                     NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
                 }
-                Label {
-                    id: clipLabel
-                    anchors.fill: parent
-                    anchors.leftMargin: 8; anchors.rightMargin: 8
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                    elide: Text.ElideRight
-                    text: "Clip · " + Number(modelData.speed).toFixed(modelData.speed % 1 ? 2 : 0) + "×"
-                    font.weight: Font.Medium
-                    font.pixelSize: theme.font.body
-                    color: theme.foreground
+                Row {
+                    id: clipLabelRow
+                    anchors.centerIn: parent
+                    spacing: 6
+                    Label {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Math.min(implicitWidth, Math.max(0, clipBlock.width - 32 - speedLabel.implicitWidth
+                                                                   - (badgeMouse.containsMouse ? 34 : 6)))
+                        elide: Text.ElideRight
+                        text: clipBlock.modelData.kind === "media"
+                            ? (clipBlock.modelData.missing ? "Missing · " : "") + clipBlock.modelData.mediaName
+                            : clipBlock.modelData.layout === "camera" ? "Camera"
+                            : clipBlock.modelData.layout === "screen" ? "Screen" : "Clip"
+                        font.weight: Font.Medium
+                        font.pixelSize: theme.type.small
+                        color: clipBlock.modelData.missing ? theme.record : theme.textStrong
+                    }
+                    Label {
+                        id: speedLabel
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: Number(clipBlock.modelData.speed).toFixed(clipBlock.modelData.speed % 1 ? 2 : 0) + "×"
+                        font.family: theme.monoFamily
+                        font.pixelSize: theme.type.caption
+                        color: clipBlock.modelData.speed !== 1 ? theme.accent : theme.textMuted
+                    }
+                    IconImage {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 11; height: 11
+                        source: "qrc:/omareel/assets/icons/lucide/chevron-down.svg"
+                        sourceSize: Qt.size(11, 11)
+                        color: theme.textMuted
+                        visible: badgeMouse.containsMouse
+                    }
                 }
                 MouseArea {
                     id: badgeMouse
                     objectName: "clipBadge-" + modelData.id
                     anchors.fill: parent
+                    hoverEnabled: true
                     preventStealing: true
                     property bool movingClip: false
                     property bool selectingRange: false
@@ -306,20 +336,36 @@ Item {
                     }
                 }
             }
-            Menu {
+            OmMenu {
                 id: speedMenu
-                width: 120
-                padding: 4
-                background: OmPopupCard { padding: 0 }
+                readonly property bool layouts: editor.hasCamera && clipBlock.modelData.kind !== "media"
+                y: clipBadge.y + clipBadge.height + 4
+                x: clipBadge.x + (clipBadge.width - width) / 2
+                width: layouts ? 168 : 120
+                Repeater {
+                    model: speedMenu.layouts ? [{value:"default", label:"Screen & camera"},
+                        {value:"camera", label:"Camera"}, {value:"screen", label:"Screen"}] : []
+                    delegate: OmMenuItem {
+                        required property var modelData
+                        text: modelData.label
+                        checkable: true
+                        checked: clipBlock.modelData.layout === modelData.value
+                        onTriggered: editor.setClipLayout(clipBlock.modelData.id, modelData.value)
+                    }
+                }
+                OmMenuSeparator {
+                    visible: speedMenu.layouts
+                    height: visible ? implicitHeight : 0
+                }
                 Repeater {
                     model: [0.5,0.75,1,1.2,1.4,1.6,1.8,2,3,4,8,16,24]
-                    delegate: MenuItem {
+                    delegate: OmMenuItem {
                         required property real modelData
-                        height: theme.space.popupRowHeight
                         text: modelData + "×"
-                        contentItem: Text { text: parent.text; color: parent.highlighted ? theme.menuSelectedText : theme.menuText; font.family: theme.fontFamily; font.pixelSize: theme.font.body; verticalAlignment: Text.AlignVCenter }
+                        font.family: theme.monoFamily
+                        checkable: true
+                        checked: clipBlock.modelData.speed === modelData
                         onTriggered: editor.setClipSpeed(clipBlock.modelData.id, modelData)
-                        background: Rectangle { radius: theme.radius; color: parent.highlighted ? theme.menuSelectedBackground : "transparent" }
                     }
                 }
             }
@@ -354,7 +400,7 @@ Item {
                 mouseArea.onPositionChanged: mouse => { if (mouseArea.pressed) {
                     editor.traceInput(mouseArea.objectName, "move", mouse.x, mouse.y)
                     const delta = mouseArea.mapToItem(root, mouse.x, mouse.y).x - leftTrim.pressTrackX
-                    const lower = index > 0 ? editor.clips[index - 1].out : 0
+                    const lower = modelData.lower
                     leftTrim.previewIn = Math.max(lower, Math.min(modelData.out - .1,
                         leftTrim.originalIn + delta / root.pixelsPerSecond * modelData.speed))
                     const actualDelta = (leftTrim.previewIn - leftTrim.originalIn)
@@ -409,8 +455,7 @@ Item {
                 mouseArea.onPositionChanged: mouse => { if (mouseArea.pressed) {
                     editor.traceInput(mouseArea.objectName, "move", mouse.x, mouse.y)
                     const delta = mouseArea.mapToItem(root, mouse.x, mouse.y).x - rightTrim.pressTrackX
-                    const upper = index + 1 < editor.clips.length
-                        ? editor.clips[index + 1].in : editor.sourceDuration
+                    const upper = modelData.upper
                     rightTrim.previewOut = Math.max(modelData.in + .1, Math.min(upper,
                         rightTrim.originalOut + delta / root.pixelsPerSecond * modelData.speed))
                     clipBlock.gestureX = rightTrim.pressBlockX

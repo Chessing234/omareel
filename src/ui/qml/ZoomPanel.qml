@@ -1,6 +1,8 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Controls.impl
+import Omareel.Ui
 
 ColumnLayout {
     id: root
@@ -24,65 +26,72 @@ ColumnLayout {
         }
         return -1
     }
-    ColumnLayout {
+    OmEmptyState {
         visible: root.selected === null
-        Layout.fillWidth: true
-        spacing: 6
-        PanelHeading { text: "No zoom selected" }
-        Label {
-            Layout.fillWidth: true
-            text: "Select a zoom on the timeline or press Z to add one"
-            wrapMode: Text.WordWrap
-            color: theme.textMuted
-            font.pixelSize: theme.font.bodySmall
-        }
+        iconSource: "qrc:/omareel/assets/icons/lucide/zoom-in.svg"
+        title: "No zoom selected"
+        hint: "Pick one on the timeline, or press"
+        key: "Z"
     }
     ColumnLayout {
         visible: root.selected !== null
         Layout.fillWidth: true
-        PanelSlider {
-            Layout.fillWidth: true; label: "Level"; path: "zoom-level"; from: 1; to: 4
-            value: root.selected ? root.selected.level : 2; stepSize: 0.05; decimals: 2
-            onValueChanged: {}
-            // PanelSlider is project-path based, so the selected zoom uses its own control below.
-            visible: false
+        spacing: theme.space.panelGap
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 4
+            RowLayout {
+                Layout.fillWidth: true
+                PanelLabel { text: "Level"; Layout.fillWidth: true }
+                PanelValue { text: root.selected ? Number(root.selected.level).toFixed(1) + "×" : ""; live: levelSlider.pressed }
+            }
+            EditorSlider {
+                id: levelSlider
+                Layout.fillWidth: true
+                Layout.leftMargin: -7; Layout.rightMargin: -7
+                from: 1; to: 4; stepSize: 0.05; value: root.selected ? root.selected.level : 2
+                onPressedChanged: pressed ? editor.beginCoalescedEdit("zoom-level") : editor.endCoalescedEdit()
+                onMoved: editor.setZoomLevel(editor.selectedZoomId, value, true)
+            }
+        }
+        OmSettingRow {
+            label: "Focus"
+            OmButtonGroup {
+                Layout.preferredWidth: 150
+                options: [{label: "Auto", value: "auto"}, {label: "Manual", value: "manual"}]
+                value: editor.pickingZoomTarget || (root.selected && typeof root.selected.target === "object") ? "manual" : "auto"
+                onChanged: value => value === "auto" ? editor.setZoomTarget(editor.selectedZoomId, "auto")
+                                                     : editor.setPickingZoomTarget(true)
+            }
         }
         RowLayout {
             Layout.fillWidth: true
-            PanelLabel { text: "Level"; Layout.fillWidth: true }
-            PanelValue { text: root.selected ? Number(root.selected.level).toFixed(1) + "×" : "" }
-        }
-        EditorSlider {
-            Layout.fillWidth: true; from: 1; to: 4; stepSize: 0.05; value: root.selected ? root.selected.level : 2
-            onPressedChanged: pressed ? editor.beginCoalescedEdit("zoom-level") : editor.endCoalescedEdit()
-            onMoved: editor.setZoomLevel(editor.selectedZoomId, value, true)
-        }
-        PanelLabel { text: "Target" }
-        EditorComboBox {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 32
-            model: ["Auto", "Manual"]
-            currentIndex: root.selected && typeof root.selected.target === "object" ? 1 : 0
-            onActivated: currentIndex === 0 ? editor.setZoomTarget(editor.selectedZoomId, "auto") : editor.setPickingZoomTarget(true)
-        }
-        EditorButton { Layout.fillWidth: true; text: editor.pickingZoomTarget ? "Click the preview…" : "Pick point on preview"; selected: editor.pickingZoomTarget; onClicked: editor.setPickingZoomTarget(!editor.pickingZoomTarget) }
-        EditorButton {
-            Layout.fillWidth: true
-            text: editor.selectedZoomIds.length > 1 ? "Remove selected zooms" : "Remove zoom"
-            destructive: true
-            onClicked: editor.removeSelectedZooms()
+            spacing: 8
+            EditorButton {
+                Layout.fillWidth: true
+                text: editor.pickingZoomTarget ? "Click the preview…" : "Pick point"
+                icon.source: "qrc:/omareel/assets/icons/lucide/mouse-pointer-2.svg"
+                selected: editor.pickingZoomTarget
+                onClicked: editor.setPickingZoomTarget(!editor.pickingZoomTarget)
+            }
+            EditorButton {
+                Layout.fillWidth: true
+                text: editor.selectedZoomIds.length > 1 ? "Remove " + editor.selectedZoomIds.length : "Remove"
+                icon.source: "qrc:/omareel/assets/icons/lucide/trash-2.svg"
+                destructive: true
+                onClicked: editor.removeSelectedZooms()
+            }
         }
     }
-    Rectangle { Layout.fillWidth: true; height: 1; color: theme.hairline }
+    OmSeparator { Layout.fillWidth: true; Layout.topMargin: 2 }
     PanelHeading { text: "Motion" }
-    EditorComboBox {
+    OmButtonGroup {
         id: springPreset
         Layout.fillWidth: true
-        Layout.preferredHeight: 32
-        model: ["Smooth", "Default", "Snappy"]
-        currentIndex: root.motionIndex()
-        onActivated: {
-            let v = root.motionPresets[currentIndex]
+        options: [{label: "Smooth", value: 0}, {label: "Default", value: 1}, {label: "Snappy", value: 2}]
+        value: root.motionIndex()
+        onChanged: index => {
+            let v = root.motionPresets[index]
             editor.beginCoalescedEdit("zoom-spring")
             editor.setProjectValue("zoomStyle.spring.mass", v[0], true)
             editor.setProjectValue("zoomStyle.spring.stiffness", v[1], true)
@@ -92,27 +101,27 @@ ColumnLayout {
     }
     Label {
         Layout.fillWidth: true
-        text: root.motionCaptions[Math.max(0, springPreset.currentIndex)]
+        text: root.motionIndex() >= 0 ? root.motionCaptions[root.motionIndex()] : "Custom spring."
         wrapMode: Text.WordWrap
         color: theme.textMuted
-        font.pixelSize: theme.font.bodySmall
+        font.pixelSize: theme.type.small
     }
     PanelSlider { Layout.fillWidth: true; label: "Edge snapping"; path: "zoomStyle.snapToEdgesRatio"; from: 0; to: 0.5; value: editor.project.zoomStyle.snapToEdgesRatio; stepSize: 0.01; decimals: 2 }
     Label {
         Layout.fillWidth: true
-        text: "How close to the frame edge the zoom may look. 0 keeps the camera centered on the target; higher lets it slide to the very edge"
+        Layout.topMargin: -6
+        text: "How close to the frame edge a zoom may look. 0 keeps the target centered; higher lets it slide to the edge."
         wrapMode: Text.WordWrap
         color: theme.textMuted
-        font.pixelSize: theme.font.bodySmall
-    }
-    EditorSwitch { Layout.preferredHeight: 32; text: "Cut instead of glide"; checked: editor.project.zoomStyle.instantAnimation; onToggled: editor.setProjectValue("zoomStyle.instantAnimation", checked) }
-    Label {
-        Layout.fillWidth: true
-        text: "Jump straight to the zoom at its start/end instead of animating"
-        wrapMode: Text.WordWrap
-        color: theme.textMuted
-        font.pixelSize: theme.font.bodySmall
+        font.pixelSize: theme.type.caption
     }
     PanelSlider { Layout.fillWidth: true; label: "Motion blur"; path: "zoomStyle.motionBlur"; from: 0; to: 1; value: editor.project.zoomStyle.motionBlur; stepSize: .05; decimals: 2 }
-    EditorButton { Layout.fillWidth: true; text: "Regenerate zooms"; onClicked: editor.regenerateZooms() }
+    EditorSwitch { text: "Cut instead of glide"; description: "Jump straight in and out instead of animating"; checked: editor.project.zoomStyle.instantAnimation; onToggled: editor.setProjectValue("zoomStyle.instantAnimation", checked) }
+    OmSeparator { Layout.fillWidth: true; Layout.topMargin: 2 }
+    EditorButton {
+        Layout.fillWidth: true
+        text: "Regenerate zooms"
+        icon.source: "qrc:/omareel/assets/icons/lucide/sparkles.svg"
+        onClicked: editor.regenerateZooms()
+    }
 }

@@ -7,12 +7,102 @@
 #include <QJsonDocument>
 #include <QImage>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QtTest>
 
 using namespace Omareel;
+
+static bool makeColourVideo(const QString &colour, const QString &path, double seconds = 2.0,
+                            const QString &size = QStringLiteral("640x360"))
+{
+    QProcess process;
+    process.start(QStringLiteral("ffmpeg"), {QStringLiteral("-y"), QStringLiteral("-v"), QStringLiteral("error"),
+        QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+        QStringLiteral("color=c=%1:size=%2:rate=30").arg(colour, size),
+        QStringLiteral("-t"), QString::number(seconds), QStringLiteral("-c:v"), QStringLiteral("libx264"),
+        QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"), path});
+    return process.waitForFinished(30000) && process.exitCode() == 0;
+}
+
+// A solid colour clip with a sine tone, for checking which source plays where.
+static bool makeToneVideo(const QString &colour, const QString &path, double seconds,
+                          const QString &size, int frequency, int sampleRate, int channels)
+{
+    QProcess process;
+    process.start(QStringLiteral("ffmpeg"), {QStringLiteral("-y"), QStringLiteral("-v"), QStringLiteral("error"),
+        QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+        QStringLiteral("color=c=%1:size=%2:rate=30").arg(colour, size),
+        QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+        QStringLiteral("sine=frequency=%1:sample_rate=%2").arg(frequency).arg(sampleRate),
+        QStringLiteral("-t"), QString::number(seconds), QStringLiteral("-ac"), QString::number(channels),
+        QStringLiteral("-c:v"), QStringLiteral("libx264"), QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"),
+        QStringLiteral("-c:a"), QStringLiteral("aac"), path});
+    return process.waitForFinished(30000) && process.exitCode() == 0;
+}
+
+// Loudest sample of the exported audio between two times, in dB (-inf for silence).
+static double maxVolume(const QString &video, double from, double to)
+{
+    QProcess process;
+    process.start(QStringLiteral("ffmpeg"), {QStringLiteral("-v"), QStringLiteral("info"),
+        QStringLiteral("-ss"), QString::number(from, 'f', 3), QStringLiteral("-t"),
+        QString::number(to - from, 'f', 3), QStringLiteral("-i"), video, QStringLiteral("-vn"),
+        QStringLiteral("-af"), QStringLiteral("volumedetect"), QStringLiteral("-f"), QStringLiteral("null"),
+        QStringLiteral("-")});
+    if (!process.waitForFinished(15000)) return 0.0;
+    const QString log = QString::fromUtf8(process.readAllStandardError());
+    const QRegularExpressionMatch match = QRegularExpression(
+        QStringLiteral("max_volume: (-?[0-9.]+|-inf) dB")).match(log);
+    if (!match.hasMatch()) return 0.0;
+    return match.captured(1) == QLatin1String("-inf") ? -200.0 : match.captured(1).toDouble();
+}
+
+static bool exportBundle(const QString &bundle, const QString &output, QString *error)
+{
+    Exporter exporter;
+    QString failure;
+    QObject::connect(&exporter, &Exporter::failed, [&](const QString &message) { failure = message; });
+    bool done = false;
+    QObject::connect(&exporter, &Exporter::finished, [&] { done = true; });
+    ExportOptions options;
+    options.bundlePath = bundle;
+    options.outputPath = output;
+    options.fps = 30;
+    options.width = 640;
+    exporter.exportBundle(options);
+    if (error) *error = failure;
+    return done && failure.isEmpty();
+}
+
+static double probeDuration(const QString &path)
+{
+    QProcess probe;
+    probe.start(QStringLiteral("ffprobe"), {QStringLiteral("-v"), QStringLiteral("error"),
+        QStringLiteral("-show_entries"), QStringLiteral("format=duration"),
+        QStringLiteral("-of"), QStringLiteral("csv=p=0"), path});
+    if (!probe.waitForFinished(15000)) return -1.0;
+    return probe.readAllStandardOutput().trimmed().toDouble();
+}
+
+static QColor pixelAt(const QString &video, double seconds, int x, int y)
+{
+    QProcess process;
+    process.start(QStringLiteral("ffmpeg"), {QStringLiteral("-v"), QStringLiteral("error"),
+        QStringLiteral("-ss"), QString::number(seconds, 'f', 3), QStringLiteral("-i"), video,
+        QStringLiteral("-frames:v"), QStringLiteral("1"), QStringLiteral("-f"), QStringLiteral("image2pipe"),
+        QStringLiteral("-c:v"), QStringLiteral("png"), QStringLiteral("-")});
+    if (!process.waitForFinished(15000)) return {};
+    const QImage frame = QImage::fromData(process.readAllStandardOutput(), "PNG");
+    return frame.valid(x, y) ? frame.pixelColor(x, y) : QColor();
+}
+
+static bool isYellow(const QColor &c) { return c.isValid() && c.red() > 150 && c.green() > 150 && c.blue() < 90; }
+static bool isRed(const QColor &c) { return c.isValid() && c.red() > 150 && c.green() < 90 && c.blue() < 90; }
+static bool isGreen(const QColor &c) { return c.isValid() && c.green() > 130 && c.red() < 90 && c.blue() < 90; }
+static bool isBlue(const QColor &c) { return c.isValid() && c.blue() > 150 && c.red() < 90 && c.green() < 90; }
 
 class ExporterSmokeTest : public QObject
 {
@@ -137,6 +227,196 @@ private slots:
         }
         QCOMPARE(QDir(temporary.path()).entryList({QStringLiteral(".omareel-export-*.mp4")},
                                                   QDir::Files | QDir::Hidden), QStringList());
+    }
+
+    void clipsStartingOnAStillScreenShowTheFrameOnScreen()
+    {
+        if (QStandardPaths::findExecutable(QStringLiteral("ffmpeg")).isEmpty()
+            || QStandardPaths::findExecutable(QStringLiteral("ffprobe")).isEmpty())
+            QSKIP("ffmpeg/ffprobe unavailable");
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        // Like a native capture of a screen that sat still: red frames until 0.5 s, then nothing
+        // until the screen turns blue at 2.5 s. Encoded as the recorder does, with gaps kept.
+        const QString bundle = temporary.filePath(QStringLiteral("still.omareel"));
+        QVERIFY(QDir().mkpath(bundle));
+        QProcess makeVideo;
+        makeVideo.start(QStringLiteral("ffmpeg"), {QStringLiteral("-y"), QStringLiteral("-v"), QStringLiteral("error"),
+            QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+            QStringLiteral("color=c=red:size=640x360:rate=30:duration=1.5[r];"
+                           "color=c=blue:size=640x360:rate=30:duration=1.5[b];[r][b]concat=n=2"),
+            QStringLiteral("-vf"), QStringLiteral("select='lt(t\\,0.5)+gte(t\\,2.5)'"),
+            QStringLiteral("-c:v"), QStringLiteral("libx264"), QStringLiteral("-bf"), QStringLiteral("0"),
+            QStringLiteral("-g"), QStringLiteral("30"), QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"),
+            QStringLiteral("-fps_mode"), QStringLiteral("vfr"), QStringLiteral("-enc_time_base"),
+            QStringLiteral("1/30"), QDir(bundle).filePath(QStringLiteral("screen.mp4"))});
+        QVERIFY(makeVideo.waitForFinished(30000) && makeVideo.exitCode() == 0);
+        QFile capture(QDir(bundle).filePath(QStringLiteral("capture.json")));
+        QVERIFY(capture.open(QIODevice::WriteOnly));
+        capture.write(R"({"fps":30,"first_frame_us":1000})");
+        capture.close();
+        QFile input(QDir(bundle).filePath(QStringLiteral("input.jsonl")));
+        QVERIFY(input.open(QIODevice::WriteOnly));
+        input.close();
+
+        // The first clip, trimmed into the still part, has no frame of its own; the second starts
+        // half a second before the screen changes.
+        Project project = Project::defaults(QStringLiteral("Still"), 3.0);
+        project.clips = {Clip{QStringLiteral("a"), 1.0, 2.0, 1.0},
+                         Clip{QStringLiteral("b"), 2.0, 3.0, 1.0}};
+        project.background.type = QStringLiteral("color");
+        project.background.color = QColor(QStringLiteral("#00c000"));
+        project.cursor.visible = false;
+        QString error;
+        QVERIFY2(project.save(QDir(bundle).filePath(QStringLiteral("project.json")), &error),
+                 qPrintable(error));
+
+        const QString output = temporary.filePath(QStringLiteral("still.mp4"));
+        QVERIFY2(exportBundle(bundle, output, &error), qPrintable(error));
+        QVERIFY(qAbs(probeDuration(output) - 2.0) < 0.05);
+        QVERIFY(isRed(pixelAt(output, 0.5, 320, 180)));
+        // The second clip holds red until its source reaches 2.5 s, 1.5 s into the export.
+        QVERIFY(isRed(pixelAt(output, 1.3, 320, 180)));
+        QVERIFY(isBlue(pixelAt(output, 1.7, 320, 180)));
+    }
+
+    void cameraLayoutsRenderFullFrame()
+    {
+        if (QStandardPaths::findExecutable(QStringLiteral("ffmpeg")).isEmpty()
+            || QStandardPaths::findExecutable(QStringLiteral("ffprobe")).isEmpty())
+            QSKIP("ffmpeg/ffprobe unavailable");
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        // Blue screen, red camera, green background: every pixel says which layer it shows.
+        const QString bundle = temporary.filePath(QStringLiteral("layouts.omareel"));
+        QVERIFY(QDir().mkpath(bundle));
+        QVERIFY(makeColourVideo(QStringLiteral("blue"), QDir(bundle).filePath(QStringLiteral("screen.mp4"))));
+        QVERIFY(makeColourVideo(QStringLiteral("red"), QDir(bundle).filePath(QStringLiteral("camera.mp4"))));
+        QFile capture(QDir(bundle).filePath(QStringLiteral("capture.json")));
+        QVERIFY(capture.open(QIODevice::WriteOnly));
+        capture.write(R"({"fps":30,"first_frame_us":1000,"camera":{"first_frame_us":1000}})");
+        capture.close();
+        QFile input(QDir(bundle).filePath(QStringLiteral("input.jsonl")));
+        QVERIFY(input.open(QIODevice::WriteOnly));
+        input.close();
+
+        Project project = Project::defaults(QStringLiteral("Layouts"), 2.0);
+        project.clips = {Clip{QStringLiteral("intro"), 0.0, 1.0, 1.0, QStringLiteral("camera")},
+                         Clip{QStringLiteral("main"), 1.0, 2.0, 1.0}};
+        project.background.type = QStringLiteral("color");
+        project.background.color = QColor(QStringLiteral("#00c000"));
+        project.cursor.visible = false;
+        project.camera.enabled = true;
+        project.camera.shadow.enabled = false;
+        const QString projectPath = QDir(bundle).filePath(QStringLiteral("project.json"));
+        QString error;
+        QVERIFY2(project.save(projectPath, &error), qPrintable(error));
+
+        const QString output = temporary.filePath(QStringLiteral("fill.mp4"));
+        QVERIFY2(exportBundle(bundle, output, &error), qPrintable(error));
+        QVERIFY(qAbs(probeDuration(output) - 2.0) < 0.05);
+        // The camera clip fills the canvas edge to edge.
+        QVERIFY(isRed(pixelAt(output, 0.5, 4, 4)));
+        QVERIFY(isRed(pixelAt(output, 0.5, 320, 180)));
+        // A quarter second into the next clip the camera is halfway back to its bubble, and the
+        // screen shows around it.
+        QVERIFY(isRed(pixelAt(output, 1.25, 500, 300)));
+        QVERIFY(isBlue(pixelAt(output, 1.25, 100, 100)));
+        // Then the screen with the round bubble at the bottom right.
+        QVERIFY(isBlue(pixelAt(output, 1.9, 320, 180)));
+        QVERIFY(isRed(pixelAt(output, 1.9, 582, 308)));
+
+        project.camera.fullFrame = QStringLiteral("square");
+        QVERIFY2(project.save(projectPath, &error), qPrintable(error));
+        const QString square = temporary.filePath(QStringLiteral("square.mp4"));
+        QVERIFY2(exportBundle(bundle, square, &error), qPrintable(error));
+        QVERIFY(isRed(pixelAt(square, 0.5, 320, 180)));
+        // Beside the square: a blurred copy of the camera, or a dark fill in software rendering,
+        // never the screen or the background.
+        const QColor side = pixelAt(square, 0.5, 20, 180);
+        QVERIFY2(!isBlue(side) && !isGreen(side), qPrintable(side.name()));
+
+        // Switching the bubble off leaves camera clips full frame.
+        project.camera.fullFrame = QStringLiteral("fill");
+        project.camera.enabled = false;
+        QVERIFY2(project.save(projectPath, &error), qPrintable(error));
+        const QString noBubble = temporary.filePath(QStringLiteral("no-bubble.mp4"));
+        QVERIFY2(exportBundle(bundle, noBubble, &error), qPrintable(error));
+        QVERIFY(isRed(pixelAt(noBubble, 0.5, 320, 180)));
+        QVERIFY(isGreen(pixelAt(noBubble, 1.9, 582, 308)));
+    }
+
+    void insertedClipsPlayWithTheirOwnPictureAndSound()
+    {
+        if (QStandardPaths::findExecutable(QStringLiteral("ffmpeg")).isEmpty()
+            || QStandardPaths::findExecutable(QStringLiteral("ffprobe")).isEmpty())
+            QSKIP("ffmpeg/ffprobe unavailable");
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        // Blue recording with a 48 kHz stereo tone, a lime 4:3 insert with a 44.1 kHz mono tone,
+        // a red insert without audio, and a yellow background.
+        const QString bundle = temporary.filePath(QStringLiteral("inserts.omareel"));
+        QVERIFY(QDir(bundle).mkpath(QStringLiteral("media")));
+        QVERIFY(makeToneVideo(QStringLiteral("blue"), QDir(bundle).filePath(QStringLiteral("screen.mp4")),
+                              2.0, QStringLiteral("640x360"), 440, 48000, 2));
+        QVERIFY(makeToneVideo(QStringLiteral("lime"), QDir(bundle).filePath(QStringLiteral("media/lime.mp4")),
+                              1.5, QStringLiteral("480x360"), 880, 44100, 1));
+        QVERIFY(makeColourVideo(QStringLiteral("red"), QDir(bundle).filePath(QStringLiteral("media/silent.mp4")),
+                                1.0));
+        QFile capture(QDir(bundle).filePath(QStringLiteral("capture.json")));
+        QVERIFY(capture.open(QIODevice::WriteOnly));
+        capture.write(R"({"fps":30,"first_frame_us":1000,"audio":{"desktop":true,"mic":true}})");
+        capture.close();
+        QFile input(QDir(bundle).filePath(QStringLiteral("input.jsonl")));
+        QVERIFY(input.open(QIODevice::WriteOnly));
+        input.close();
+
+        const auto insert = [](const char *id, const char *file, double in, double out, const char *fit) {
+            Clip clip{QString::fromLatin1(id), in, out, 1.0};
+            clip.media = QStringLiteral("media/") + QString::fromLatin1(file);
+            clip.fit = QString::fromLatin1(fit);
+            return clip;
+        };
+        Project project = Project::defaults(QStringLiteral("Inserts"), 2.0);
+        project.clips = {Clip{QStringLiteral("a"), 0.0, 1.0, 1.0},                 // 0.0-1.0
+                         insert("fit", "lime.mp4", 0.2, 1.2, "fit"),                // 1.0-2.0
+                         insert("fill", "lime.mp4", 0.2, 0.7, "fill"),              // 2.0-2.5
+                         insert("framed", "lime.mp4", 0.7, 1.2, "framed"),          // 2.5-3.0
+                         insert("quiet", "silent.mp4", 0.0, 0.5, "fill"),           // 3.0-3.5
+                         Clip{QStringLiteral("b"), 1.0, 2.0, 1.0}};                 // 3.5-4.5
+        project.background.type = QStringLiteral("color");
+        project.background.color = QColor(QStringLiteral("#ffff00"));
+        project.cursor.visible = false;
+        project.camera.enabled = false;
+        const QString projectPath = QDir(bundle).filePath(QStringLiteral("project.json"));
+        QString error;
+        QVERIFY2(project.save(projectPath, &error), qPrintable(error));
+
+        const QString output = temporary.filePath(QStringLiteral("inserts.mp4"));
+        QVERIFY2(exportBundle(bundle, output, &error), qPrintable(error));
+        QVERIFY2(qAbs(probeDuration(output) - 4.5) < 0.06, qPrintable(QString::number(probeDuration(output))));
+        QVERIFY(isBlue(pixelAt(output, 0.5, 320, 180)));
+        // Fit: the whole 4:3 insert, with a blurred copy (or a dark fill in software
+        // rendering) beside it instead of the background.
+        QVERIFY(isGreen(pixelAt(output, 1.5, 320, 180)));
+        const QColor beside = pixelAt(output, 1.5, 4, 4);
+        QVERIFY2(!isBlue(beside) && !isYellow(beside), qPrintable(beside.name()));
+        // Fill covers the canvas; framed sits in the frame over the background.
+        QVERIFY(isGreen(pixelAt(output, 2.25, 4, 4)));
+        QVERIFY(isYellow(pixelAt(output, 2.75, 4, 4)));
+        QVERIFY(isGreen(pixelAt(output, 2.75, 320, 180)));
+        QVERIFY(isRed(pixelAt(output, 3.25, 320, 180)));
+        QVERIFY(isBlue(pixelAt(output, 4.0, 320, 180)));
+        // Every clip keeps its own sound in place: the recording's, the insert's, silence.
+        QVERIFY(maxVolume(output, 0.1, 0.9) > -30.0);
+        QVERIFY(maxVolume(output, 1.1, 2.9) > -30.0);
+        QVERIFY2(maxVolume(output, 3.1, 3.4) < -60.0, qPrintable(QString::number(maxVolume(output, 3.1, 3.4))));
+        QVERIFY(maxVolume(output, 3.6, 4.4) > -30.0);
+
+        // A missing insert fails the export early, naming it.
+        QVERIFY(QFile::remove(QDir(bundle).filePath(QStringLiteral("media/silent.mp4"))));
+        QVERIFY(!exportBundle(bundle, temporary.filePath(QStringLiteral("missing.mp4")), &error));
+        QVERIFY2(error.contains(QStringLiteral("silent.mp4")), qPrintable(error));
     }
 
     void exportsTwoSecondH264()

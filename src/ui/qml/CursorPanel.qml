@@ -40,68 +40,64 @@ ColumnLayout {
         return ""
     }
 
-    EditorSwitch { Layout.preferredHeight: 32; text: "Show cursor"; checked: root.cursor.visible; onToggled: editor.setProjectValue("cursor.visible", checked) }
-    PanelSlider { Layout.fillWidth: true; label: "Size"; path: "cursor.size"; from: 0.5; to: 3; value: root.cursor.size; stepSize: 0.05; decimals: 2 }
+    EditorSwitch { text: "Show cursor"; description: "Draw the smoothed pointer over the video"; checked: root.cursor.visible; onToggled: editor.setProjectValue("cursor.visible", checked) }
+    PanelSlider { Layout.fillWidth: true; label: "Size"; path: "cursor.size"; from: 0.5; to: 3; value: root.cursor.size; stepSize: 0.05; decimals: 2; suffix: "×" }
 
-    PanelHeading { text: "Style"; topPadding: 4 }
+    PanelHeading { text: "Style"; Layout.topMargin: 4 }
     GridLayout {
         Layout.fillWidth: true
-        columns: 2
-        columnSpacing: 8
-        rowSpacing: 8
+        columns: 4
+        columnSpacing: 6
+        rowSpacing: 6
         Repeater {
             model: root.cursorStyles
             delegate: Rectangle {
+                id: styleTile
                 required property var modelData
+                readonly property bool selected: root.cursor.style === modelData.value
                 Layout.fillWidth: true
-                Layout.preferredHeight: 72
-                radius: theme.radius
-                color: root.cursor.style === modelData.value
-                    ? theme.selectedFill : theme.normalFill
-                border.width: 1
-                border.color: root.cursor.style === modelData.value
-                    ? theme.selectedBorder : theme.normalBorder
-                Column {
+                Layout.preferredWidth: 1
+                Layout.preferredHeight: 58
+                radius: theme.controlRadius
+                color: selected ? Qt.alpha(theme.accent, .12) : styleMouse.containsMouse ? theme.fillHover : theme.fill
+                border.width: selected ? 1.5 : 1
+                border.color: selected ? theme.accent : theme.stroke
+                Behavior on color { ColorAnimation { duration: 140 } }
+                Item {
                     anchors.centerIn: parent
-                    spacing: 5
-                    Item {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: 30; height: 30
-                        Image {
-                            anchors.centerIn: parent
-                            width: 26; height: 26
-                            visible: modelData.value !== "dot"
-                            source: visible ? "qrc:/omareel/assets/cursors/" + modelData.asset : ""
-                            sourceSize: Qt.size(104, 104)
-                            smooth: true
-                        }
-                        Rectangle {
-                            anchors.centerIn: parent
-                            visible: modelData.value === "dot"
-                            width: 26; height: 26; radius: 13
-                            color: Qt.alpha(theme.accent, .68)
-                            border.width: 1
-                            border.color: theme.hairlineStrong
-                        }
+                    width: 26; height: 26
+                    scale: styleMouse.pressed ? .9 : styleMouse.containsMouse ? 1.08 : 1
+                    Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutBack; easing.overshoot: 2 } }
+                    Image {
+                        anchors.centerIn: parent
+                        width: 24; height: 24
+                        visible: modelData.value !== "dot"
+                        source: visible ? "qrc:/omareel/assets/cursors/" + modelData.asset : ""
+                        sourceSize: Qt.size(96, 96)
+                        smooth: true
                     }
-                    Label {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        text: modelData.label
-                        color: theme.foreground
-                        font.pixelSize: theme.font.bodySmall
-                        font.weight: root.cursor.style === modelData.value ? Font.DemiBold : Font.Normal
+                    Rectangle {
+                        anchors.centerIn: parent
+                        visible: modelData.value === "dot"
+                        width: 20; height: 20; radius: 10
+                        color: Qt.alpha(theme.accent, .68)
+                        border.width: 1
+                        border.color: theme.strokeStrong
                     }
                 }
                 MouseArea {
+                    id: styleMouse
                     anchors.fill: parent
+                    hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: editor.setProjectValue("cursor.style", modelData.value)
                 }
+                OmToolTip { target: styleTile; visible: styleMouse.containsMouse; text: modelData.label }
             }
         }
     }
 
-    PanelHeading { text: "Motion"; topPadding: 4 }
+    PanelHeading { text: "Motion"; Layout.topMargin: 4 }
     OmButtonGroup {
         Layout.fillWidth: true
         options: [{label:"Natural", value:"natural"}, {label:"Smooth", value:"smooth"}]
@@ -113,44 +109,50 @@ ColumnLayout {
     }
     Label {
         Layout.fillWidth: true
-        text: "Natural stays close to raw movement; Smooth uses a softer spring."
+        text: root.motionValue() === "" ? "Using a custom spring — tune it below."
+            : "Natural stays close to raw movement; Smooth uses a softer spring."
         wrapMode: Text.WordWrap
         color: theme.textMuted
-        font.pixelSize: theme.font.bodySmall
+        font.pixelSize: theme.type.small
     }
 
-    PanelLabel { text: "Click effect" }
-    EditorComboBox {
-        Layout.fillWidth: true
-        Layout.preferredHeight: 32
-        model: root.clickEffects
-        textRole: "label"
-        currentIndex: root.clickEffectIndex(root.cursor.clickEffect)
-        onActivated: editor.setProjectValue("cursor.clickEffect", model[currentIndex].value)
+    OmSeparator { Layout.fillWidth: true; Layout.topMargin: 2 }
+    PanelHeading { text: "Clicks" }
+    OmSettingRow {
+        label: "Effect"
+        EditorComboBox {
+            Layout.preferredWidth: 120
+            model: root.clickEffects
+            textRole: "label"
+            currentIndex: root.clickEffectIndex(root.cursor.clickEffect)
+            onActivated: editor.setProjectValue("cursor.clickEffect", model[currentIndex].value)
+        }
     }
-    PanelLabel { text: "Click sound" }
-    EditorComboBox {
-        Layout.fillWidth: true
-        Layout.preferredHeight: 32
-        model: [{label:"None",value:"none"},{label:"Soft",value:"soft"}]
-        textRole: "label"
-        currentIndex: root.cursor.clickSound === "soft" ? 1 : 0
-        onActivated: editor.setProjectValue("cursor.clickSound", model[currentIndex].value)
+    OmSettingRow {
+        label: "Sound"
+        EditorComboBox {
+            Layout.preferredWidth: 120
+            model: [{label:"None",value:"none"},{label:"Soft",value:"soft"}]
+            textRole: "label"
+            currentIndex: root.cursor.clickSound === "soft" ? 1 : 0
+            onActivated: editor.setProjectValue("cursor.clickSound", model[currentIndex].value)
+        }
     }
-    RowLayout {
-        Layout.fillWidth: true
-        PanelLabel { text: "Ring color"; Layout.fillWidth: true }
-        Rectangle { width: 44; height: 28; radius: theme.radius; color: root.cursor.ringColor; border.color: theme.normalBorder; MouseArea { anchors.fill: parent; onClicked: ringDialog.open() } }
+    OmSettingRow {
+        label: "Ring color"
+        OmColorWell { swatch: root.cursor.ringColor; onClicked: ringDialog.open() }
     }
+    OmSeparator { Layout.fillWidth: true; Layout.topMargin: 2 }
     EditorSwitch {
         id: idleSwitch
-        Layout.preferredHeight: 32
         text: "Hide when idle"
+        description: "Fade the cursor out when it stops moving"
         checked: root.cursor.hideWhenIdleMs !== null
         onToggled: editor.setProjectValue("cursor.hideWhenIdleMs", checked ? 1500 : null)
     }
-    PanelSlider { visible: idleSwitch.checked; Layout.fillWidth: true; label: "Idle delay (ms)"; path: "cursor.hideWhenIdleMs"; from: 250; to: 5000; value: root.cursor.hideWhenIdleMs || 1500; stepSize: 250 }
-    PanelHeading { text: "Custom spring"; topPadding: 8 }
+    PanelSlider { visible: idleSwitch.checked; Layout.fillWidth: true; label: "Idle delay"; path: "cursor.hideWhenIdleMs"; from: 250; to: 5000; value: root.cursor.hideWhenIdleMs || 1500; stepSize: 250; suffix: " ms" }
+    OmSeparator { Layout.fillWidth: true; Layout.topMargin: 2 }
+    PanelHeading { text: "Spring" }
     PanelSlider { Layout.fillWidth: true; label: "Mass"; path: "cursor.spring.mass"; from: 0.2; to: 6; value: root.cursor.spring.mass; stepSize: 0.05; decimals: 2 }
     PanelSlider { Layout.fillWidth: true; label: "Stiffness"; path: "cursor.spring.stiffness"; from: 50; to: 1000; value: root.cursor.spring.stiffness; stepSize: 5 }
     PanelSlider { Layout.fillWidth: true; label: "Damping"; path: "cursor.spring.damping"; from: 5; to: 120; value: root.cursor.spring.damping; stepSize: 1 }

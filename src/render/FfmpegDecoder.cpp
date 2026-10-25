@@ -35,11 +35,17 @@ bool FfmpegDecoder::launch(bool hardware, QString *error)
 {
     QStringList args{QStringLiteral("-v"), QStringLiteral("error")};
     if (hardware) args << QStringLiteral("-hwaccel") << QStringLiteral("cuda");
+    // Screen recordings only have frames where the screen changed, so a clip can start seconds
+    // after its last frame, or hold none at all. Accurate seeking drops that frame and the fps
+    // filter would then start at the next one, shifting the clip early or leaving it empty.
+    // Decoding from the keyframe before the start and anchoring the output grid at the start
+    // shows the frame on screen at each instant.
     const QString videoFilter = m_scale
-        ? QStringLiteral("fps=%1,format=rgba,scale=%2:%3:flags=bilinear")
+        ? QStringLiteral("fps=%1:start_time=0,format=rgba,scale=%2:%3:flags=bilinear")
               .arg(m_fps, 0, 'g', 12).arg(m_width).arg(m_height)
-        : QStringLiteral("fps=%1").arg(m_fps, 0, 'g', 12);
+        : QStringLiteral("fps=%1:start_time=0").arg(m_fps, 0, 'g', 12);
     args << QStringLiteral("-ss") << QString::number(m_start, 'f', 6)
+         << QStringLiteral("-noaccurate_seek")
          << QStringLiteral("-i") << m_path
          << QStringLiteral("-t") << QString::number(m_length, 'f', 6)
          << QStringLiteral("-vf") << videoFilter

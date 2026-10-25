@@ -18,6 +18,43 @@ double ClipTimeline::totalDuration() const
     return total;
 }
 
+int ClipTimeline::clipAt(double output, double *clipOutputStart) const
+{
+    double start = 0.0;
+    for (int i = 0; i < m_clips.size(); ++i) {
+        const double length = duration(m_clips[i]);
+        if (output < start + length || i == m_clips.size() - 1) {
+            if (clipOutputStart) *clipOutputStart = start;
+            return i;
+        }
+        start += length;
+    }
+    return -1;
+}
+
+double ClipTimeline::recordingSourceTime(double output) const
+{
+    const int index = clipAt(output);
+    if (index < 0) return -1.0;
+    if (!m_clips[index].isMedia()) return sourceTime(output);
+    for (int i = index - 1; i >= 0; --i)
+        if (!m_clips[i].isMedia()) return m_clips[i].out;
+    for (int i = index + 1; i < m_clips.size(); ++i)
+        if (!m_clips[i].isMedia()) return m_clips[i].in;
+    return 0.0;
+}
+
+QPair<double, double> ClipTimeline::recordingBounds(int index, double sourceDuration) const
+{
+    double lower = 0.0;
+    double upper = sourceDuration;
+    for (int i = index - 1; i >= 0; --i)
+        if (!m_clips[i].isMedia()) { lower = m_clips[i].out; break; }
+    for (int i = index + 1; i < m_clips.size(); ++i)
+        if (!m_clips[i].isMedia()) { upper = m_clips[i].in; break; }
+    return {lower, upper};
+}
+
 double ClipTimeline::sourceTime(double output) const
 {
     if (m_clips.isEmpty()) return -1.0;
@@ -45,6 +82,7 @@ QPair<double, double> ClipTimeline::outputRange(double sourceStart, double sourc
 {
     QPair<double, double> range{-1.0, -1.0};
     for (int i = 0; i < m_clips.size(); ++i) {
+        if (m_clips[i].isMedia()) continue;
         const double from = std::max(sourceStart, m_clips[i].in);
         const double to = std::min(sourceEnd, m_clips[i].out);
         if (to <= from) continue;
