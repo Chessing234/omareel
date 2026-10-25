@@ -165,14 +165,20 @@ monotonic clock and copy-muxed with the video at stop.
              "shape":"round",       // round | square | rectangle (the webcam's own aspect)
              "radius":16,           // corners of square and rectangle, px at 1080p reference
              "flipHorizontal":false,"rotation":0,
-             "shadow":true,"scaleDuringZoom":0.7,"offset":{"x":0.02,"y":0.02}},
+             "shadow":{"enabled":true,"intensity":0.28,"blur":23,"distance":20,"angle":45},
+             "border":{"enabled":true,"width":6,"color":"#ffffff","alpha":0.7},
+             "scaleDuringZoom":0.7,
+             "offset":{"x":0.035,"y":0.035}},  // gap to the border's outside, × the shorter side
   "export": {"format":"mp4","fps":60,"width":1920,"quality":"high","gif":{"fps":20,"width":960}}
 }
 ```
 
 Projects before `defaultsVersion` 3 kept the camera's `crop` (square | original) apart from a
 `round | rounded | square` shape whose only difference was the corners; loading folds the crop into
-`shape` and turns the old sharp `square` into a radius of 0.
+`shape` and turns the old sharp `square` into a radius of 0. Before `defaultsVersion` 4 the camera's
+`offset` was a fraction of the canvas width (x) and height (y), so the gap at the bottom was smaller
+than at the side; untouched old camera shadow, border width, and offset values move to the new
+defaults, and the shadow and border stay switched as they were.
 
 Output size: derived from `aspect` + `export.width`; height = width / aspect (round to even).
 For `auto`, aspect = cropped source aspect.

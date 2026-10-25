@@ -10,14 +10,23 @@
 
 using namespace Omareel;
 namespace {
-QByteArray hyprctl(const QStringList &arguments, bool *ok = nullptr)
+// reply receives what hyprctl printed even when it failed, so a refusal can say why.
+QByteArray hyprctl(const QStringList &arguments, bool *ok = nullptr, QString *reply = nullptr)
 {
     QProcess process;
     process.start("hyprctl", arguments);
-    const bool success = process.waitForFinished(2000) && process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+    const bool finished = process.waitForFinished(2000);
+    const bool success = finished && process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
     if (!success && process.state() != QProcess::NotRunning) { process.kill(); process.waitForFinished(1000); }
     if (ok) *ok = success;
-    return success ? process.readAllStandardOutput() : QByteArray();
+    const QByteArray output = process.readAllStandardOutput();
+    if (reply) {
+        *reply = QString::fromUtf8(output + process.readAllStandardError()).simplified();
+        if (!finished) *reply = QStringLiteral("hyprctl did not answer within 2 seconds");
+        else if (reply->isEmpty() && process.error() == QProcess::FailedToStart)
+            *reply = QStringLiteral("hyprctl could not be started");
+    }
+    return success ? output : QByteArray();
 }
 
 bool setNoHardwareCursors(int value)
@@ -87,11 +96,15 @@ CaptureExclusion::Status CaptureExclusion::ensureLoaded()
         if (!compatibleHash(built, version.value("commit").toString()))
             return {false, built, "Capture exclusion plugin needs rebuilding for this Hyprland commit", {}};
         bool loaded = false;
-        const auto reply = hyprctl({"plugin", "load", QFileInfo(path).absoluteFilePath()}, &loaded);
+        QString reply;
+        hyprctl({"plugin", "load", QFileInfo(path).absoluteFilePath()}, &loaded, &reply);
         // Hyprctl can exit successfully while the compositor returns a load error.
-        if (!loaded || reply.trimmed() != "ok") return {false, built, "Hyprland refused to load the capture exclusion plugin", {}};
+        if (!loaded || reply != QLatin1String("ok"))
+            return {false, built, QStringLiteral("Hyprland refused to load the capture exclusion plugin (%1)")
+                .arg(reply.isEmpty() ? QStringLiteral("no reply") : reply), {}};
         return status();
     }
+    result.reason = "Capture exclusion plugin is not installed or was not built (it needs Hyprland's headers)";
     return result;
 }
 

@@ -3,6 +3,8 @@ import QtQuick.Controls
 import QtQuick.Controls.impl
 import QtQuick.Layouts
 
+// One button for the whole app. Ghost by default; `bordered` gives the soft filled secondary
+// look, `primary` the accent call to action, `destructive` turns either toward the record red.
 Button {
     id: control
     property bool selected: checked
@@ -12,24 +14,33 @@ Button {
     property bool destructive: false
     property bool leadingDot: false
     property string tooltipText: ""
+    property string tooltipShortcut: ""
+    property string tooltipPlacement: "below"
     property url trailingIconSource
+    property color contentColor: !enabled ? theme.textFaint
+        : primary ? (destructive ? "white" : theme.accentForeground)
+        : destructive ? theme.record
+        : selected || active || hovered || down ? theme.textStrong : theme.foreground
 
     implicitHeight: theme.space.controlHeight
     implicitWidth: contentRow.implicitWidth + leftPadding + rightPadding
     topInset: 0; bottomInset: 0
-    leftPadding: theme.space.controlPaddingX
-    rightPadding: theme.space.controlPaddingX
-    topPadding: theme.space.controlPaddingY
-    bottomPadding: theme.space.controlPaddingY
-    spacing: theme.space.controlGap
+    leftPadding: theme.space.controlPaddingX + 2
+    rightPadding: theme.space.controlPaddingX + 2
+    topPadding: 0
+    bottomPadding: 0
+    spacing: theme.space.md
     hoverEnabled: true
     focusPolicy: Qt.TabFocus
     font.family: theme.fontFamily
-    font.pixelSize: theme.font.body
-    font.bold: selected
-    icon.width: 14
-    icon.height: 14
-    icon.color: destructive ? theme.record : theme.foreground
+    font.pixelSize: theme.type.body
+    font.weight: Font.Medium
+    icon.width: 15
+    icon.height: 15
+    icon.color: contentColor
+    opacity: enabled ? 1 : .55
+    scale: down ? .97 : 1
+    Behavior on scale { NumberAnimation { duration: control.down ? 70 : 220; easing.type: Easing.OutBack; easing.overshoot: 2.2 } }
 
     // Centre the icon+text cluster without spacer items: spacers add layout
     // spacing to implicitWidth, which made grouped buttons overflow when squeezed.
@@ -37,107 +48,90 @@ Button {
         implicitWidth: contentRow.implicitWidth
         implicitHeight: contentRow.implicitHeight
         RowLayout {
-        id: contentRow
-        anchors.centerIn: parent
-        width: Math.min(implicitWidth, parent.width)
-        spacing: control.spacing
-        Item {
-            visible: control.leadingDot || control.icon.source.toString() !== ""
-            Layout.preferredWidth: control.icon.width
-            Layout.preferredHeight: control.icon.height
-            Layout.alignment: Qt.AlignVCenter
-            IconImage {
-                visible: !control.leadingDot
-                anchors.fill: parent
-                source: control.icon.source
-                sourceSize: Qt.size(control.icon.width, control.icon.height)
-                color: control.icon.color
+            id: contentRow
+            anchors.centerIn: parent
+            width: Math.min(implicitWidth, parent.width)
+            spacing: control.spacing
+            Item {
+                visible: control.leadingDot || control.icon.source.toString() !== ""
+                Layout.preferredWidth: control.icon.width
+                Layout.preferredHeight: control.icon.height
+                Layout.alignment: Qt.AlignVCenter
+                IconImage {
+                    visible: !control.leadingDot
+                    anchors.fill: parent
+                    source: control.icon.source
+                    sourceSize: Qt.size(control.icon.width, control.icon.height)
+                    color: control.icon.color
+                    Behavior on color { ColorAnimation { duration: 140 } }
+                }
+                Rectangle {
+                    visible: control.leadingDot
+                    anchors.centerIn: parent
+                    width: 8; height: 8; radius: 4
+                    color: theme.record
+                }
             }
-            Rectangle {
-                visible: control.leadingDot
-                anchors.centerIn: parent
-                width: 10; height: 10; radius: 5
-                color: theme.record
+            Text {
+                visible: control.text !== ""
+                text: control.text
+                color: control.contentColor
+                font: control.font
+                elide: Text.ElideRight
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
+                Behavior on color { ColorAnimation { duration: 140 } }
             }
-        }
-        Text {
-            visible: control.text !== ""
-            text: control.text
-            color: !control.enabled ? theme.textFaint
-                 : control.destructive ? theme.record
-                 : theme.foreground
-            font: control.font
-            elide: Text.ElideRight
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-            Layout.fillWidth: true
-            Layout.alignment: Qt.AlignVCenter
-        }
-        Item {
-            visible: control.trailingIconSource.toString() !== ""
-            Layout.preferredWidth: 14
-            Layout.preferredHeight: 14
-            Layout.alignment: Qt.AlignVCenter
-            IconImage {
-                anchors.fill: parent
-                source: control.trailingIconSource
-                sourceSize: Qt.size(14, 14)
-                color: control.destructive ? theme.record : theme.foreground
+            Item {
+                visible: control.trailingIconSource.toString() !== ""
+                Layout.preferredWidth: 14
+                Layout.preferredHeight: 14
+                Layout.alignment: Qt.AlignVCenter
+                IconImage {
+                    anchors.fill: parent
+                    source: control.trailingIconSource
+                    sourceSize: Qt.size(14, 14)
+                    color: control.primary ? control.contentColor : theme.textMuted
+                }
             }
-        }
         }
     }
 
     background: Rectangle {
-        radius: theme.radius
-        color: control.down ? theme.pressedFill
-             : control.primary ? theme.selectedFill
-             : control.selected || control.active ? theme.selectedFill
-             : control.visualFocus || control.hovered ? theme.hoverFill
-             : control.bordered ? theme.normalFill : "transparent"
-        border.width: control.primary ? 1
-                    : (control.bordered || control.hovered || control.visualFocus || control.selected)
-                      ? theme.controlBorderWidth(control.visualFocus, control.hovered, control.selected) : 0
-        border.color: control.primary ? Qt.alpha(theme.selectedBorder, 1)
-                     : theme.controlBorder(control.visualFocus, control.hovered, control.selected)
-        Behavior on color { ColorAnimation { duration: 120 } }
-        Behavior on border.color { ColorAnimation { duration: 120 } }
+        radius: theme.controlRadius
+        readonly property color primaryColor: control.destructive ? theme.record : theme.accent
+        color: control.primary
+               ? (control.down ? Qt.darker(primaryColor, 1.12)
+                  : control.hovered ? Qt.lighter(primaryColor, 1.08) : primaryColor)
+             : control.destructive && (control.hovered || control.down) ? Qt.alpha(theme.record, control.down ? .22 : .14)
+             : control.down ? theme.fillPressed
+             : control.selected || control.active ? theme.fillPressed
+             : control.hovered || control.visualFocus ? theme.fillHover
+             : control.bordered ? theme.fill : Qt.alpha(theme.foreground, 0)
+        border.width: control.visualFocus ? 1 : control.bordered && !control.primary ? 1 : 0
+        border.color: control.visualFocus ? Qt.alpha(theme.accent, .8)
+                    : control.selected ? theme.strokeStrong : theme.stroke
+        Behavior on color { ColorAnimation { duration: 140; easing.type: Easing.OutCubic } }
+        // Light catches the top edge of filled buttons.
+        Rectangle {
+            visible: control.primary
+            anchors.fill: parent
+            radius: parent.radius
+            gradient: Gradient {
+                GradientStop { position: 0; color: Qt.rgba(1, 1, 1, .14) }
+                GradientStop { position: .5; color: Qt.rgba(1, 1, 1, 0) }
+            }
+        }
     }
-    ToolTip {
+    OmToolTip {
         id: toolTip
         objectName: "omButtonToolTip"
-        parent: control
-        visible: control.tooltipText !== "" && control.hovered
-        delay: 400
-        x: (control.width - width) / 2
-        y: {
-            const below = control.height + 6
-            if (!control.Window.window) return below
-            const sceneBelow = control.mapToItem(null, 0, below).y
-            if (sceneBelow + height <= control.Window.window.height) return below
-            const above = -height - 6
-            if (control.mapToItem(null, 0, above).y >= 0) return above
-            const controlSceneY = control.mapToItem(null, 0, 0).y
-            return Math.max(-controlSceneY,
-                            control.Window.window.height - height - controlSceneY)
-        }
-        closePolicy: Popup.NoAutoClose
-        modal: false
-        dim: false
-        focus: false
-        padding: theme.space.controlPaddingY
-        contentItem: Text {
-            enabled: false
-            text: control.tooltipText
-            color: theme.tooltipText
-            font.family: theme.fontFamily
-            font.pixelSize: theme.font.bodySmall
-        }
-        background: Rectangle {
-            enabled: false
-            color: theme.tooltipBackground
-            border.width: 1; border.color: theme.tooltipBorder
-            radius: theme.radius
-        }
+        target: control
+        visible: control.tooltipText !== "" && control.hovered && !control.down
+        text: control.tooltipText
+        shortcut: control.tooltipShortcut
+        placement: control.tooltipPlacement
     }
 }

@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFont>
+#include <QFontDatabase>
 #include <QGuiApplication>
 #include <QHash>
 #include <QProcess>
@@ -22,6 +23,15 @@ static QColor alphaColor(const QColor &color, double alpha)
     QColor result = color;
     result.setAlphaF(qBound(0.0, alpha, 1.0));
     return result;
+}
+
+static QColor mixColor(const QColor &from, const QColor &to, double amount)
+{
+    const double t = qBound(0.0, amount, 1.0);
+    return QColor::fromRgbF(from.redF() + (to.redF() - from.redF()) * t,
+                            from.greenF() + (to.greenF() - from.greenF()) * t,
+                            from.blueF() + (to.blueF() - from.blueF()) * t,
+                            from.alphaF() + (to.alphaF() - from.alphaF()) * t);
 }
 
 static double luminance(const QColor &color)
@@ -70,9 +80,25 @@ static QColor roleColor(QString value, const QColor &foreground, const QColor &b
     return parsed.isValid() ? parsed : fallback;
 }
 
+QString Theme::bundledUiFamily()
+{
+    static QString family;
+    static bool attempted = false;
+    if (attempted || !qobject_cast<QGuiApplication *>(QCoreApplication::instance())) return family;
+    attempted = true;
+    for (const char *weight : {"Regular", "Medium", "SemiBold", "Bold"}) {
+        const int id = QFontDatabase::addApplicationFont(
+            QStringLiteral(":/omareel/assets/fonts/Inter-%1.ttf").arg(QLatin1String(weight)));
+        const QStringList families = QFontDatabase::applicationFontFamilies(id);
+        if (family.isEmpty() && !families.isEmpty()) family = families.first();
+    }
+    return family;
+}
+
 Theme::Theme(QObject *parent) : QObject(parent)
 {
     if (!configuredFontFamily.isEmpty()) m_fontFamily = configuredFontFamily;
+    else if (const QString bundled = bundledUiFamily(); !bundled.isEmpty()) m_fontFamily = bundled;
     const auto sourceChanged = [this] {
         emit this->sourceChanged();
         QTimer::singleShot(220, this, &Theme::reload);
@@ -87,12 +113,21 @@ void Theme::setFontFamilies(const QString &fontFamily, const QString &)
     configuredFontFamily = fontFamily;
 }
 
-QColor Theme::hairline() const { return alphaColor(m_foreground, .08); }
-QColor Theme::hairlineStrong() const { return alphaColor(m_foreground, .14); }
-QColor Theme::separator() const { return alphaColor(m_foreground, .12); }
-QColor Theme::textMuted() const { return m_foreground.darker(140); }
-QColor Theme::textFaint() const { return m_foreground.darker(160); }
-QColor Theme::accentSoft() const { return alphaColor(m_accent, .18); }
+QColor Theme::hairline() const { return alphaColor(m_foreground, m_dark ? .07 : .10); }
+QColor Theme::hairlineStrong() const { return alphaColor(m_foreground, m_dark ? .12 : .16); }
+QColor Theme::separator() const { return alphaColor(m_foreground, m_dark ? .08 : .11); }
+// Muted text is mixed toward the background, so it recedes in light themes as well as dark.
+QColor Theme::textMuted() const { return mixColor(m_foreground, m_background, .36); }
+QColor Theme::textFaint() const { return mixColor(m_foreground, m_background, .56); }
+QColor Theme::accentSoft() const { return alphaColor(m_accent, .16); }
+QColor Theme::stroke() const { return alphaColor(m_foreground, m_dark ? .08 : .12); }
+QColor Theme::strokeStrong() const { return alphaColor(m_foreground, m_dark ? .14 : .20); }
+QColor Theme::fill() const { return alphaColor(m_foreground, m_dark ? .06 : .06); }
+QColor Theme::fillHover() const { return alphaColor(m_foreground, m_dark ? .10 : .10); }
+QColor Theme::fillPressed() const { return alphaColor(m_foreground, m_dark ? .15 : .14); }
+QColor Theme::accentHover() const { return m_dark ? m_accent.lighter(112) : m_accent.darker(108); }
+QColor Theme::accentPressed() const { return m_dark ? m_accent.darker(112) : m_accent.darker(118); }
+QColor Theme::shadow() const { return QColor(0, 0, 0, m_dark ? 140 : 46); }
 
 QColor Theme::accentForeground() const
 {
@@ -153,6 +188,15 @@ void Theme::reload()
     m_darkBackground = darker;
     m_record = attention;
     m_dark = colors.value(QStringLiteral(".mode")) == QLatin1String("dark") || luminance(background) < .35;
+    // Layered surfaces: the stage sits below the chrome, cards and raised controls lift above it.
+    m_canvas = m_dark ? (colors.contains(QStringLiteral(".dark_background")) ? darker
+                                                                            : mixColor(background, Qt::black, .22))
+                      : mixColor(background, foreground, .05);
+    m_card = mixColor(background, foreground, m_dark ? .035 : .025);
+    m_raised = m_dark ? mixColor(background, foreground, .11) : mixColor(background, Qt::white, .7);
+    m_textStrong = colors.contains(QStringLiteral(".bright_foreground")) && m_dark
+        ? QColor(colors.value(QStringLiteral(".bright_foreground")))
+        : m_dark ? mixColor(foreground, Qt::white, .25) : mixColor(foreground, Qt::black, .25);
     m_themeName = OmarchyPaths::currentThemeName();
 
     const QColor normal = color(QStringLiteral("controls.normal-color"), foreground);
@@ -189,16 +233,26 @@ void Theme::reload()
     m_menuSelectedText = color(QStringLiteral("menu.selected-text"), accent);
 
     const int base = qMax(1, qRound(number(QStringLiteral("font.base-size"), 12)));
+    // The interface is set in the bundled sans; the Omarchy monospace carries numbers,
+    // timecodes, and keys so the app still reads as part of the desktop.
     QProcess fontMatch;
     fontMatch.start(QStringLiteral("fc-match"),
                     {QStringLiteral("-f"), QStringLiteral("%{family[0]}"), QStringLiteral("monospace")});
     if (fontMatch.waitForFinished(1200) && fontMatch.exitCode() == 0) {
         const QString family = QString::fromUtf8(fontMatch.readAllStandardOutput()).trimmed();
-        if (!family.isEmpty()) m_fontFamily = family;
+        if (!family.isEmpty()) m_monoFamily = family;
     }
+    const auto typeSize = [base](double multiplier) { return qMax(1, qRound(base * multiplier)); };
+    m_type = {{QStringLiteral("caption"), typeSize(.917)},
+              {QStringLiteral("small"), typeSize(1)},
+              {QStringLiteral("body"), typeSize(1.083)},
+              {QStringLiteral("title"), typeSize(1.167)},
+              {QStringLiteral("headline"), typeSize(1.333)},
+              {QStringLiteral("display"), typeSize(1.833)},
+              {QStringLiteral("hero"), typeSize(2.667)}};
     if (qobject_cast<QGuiApplication *>(QCoreApplication::instance())) {
         QFont applicationFont(m_fontFamily);
-        applicationFont.setPixelSize(base);
+        applicationFont.setPixelSize(m_type.value(QStringLiteral("body")).toInt());
         QGuiApplication::setFont(applicationFont);
     }
     const auto fontToken = [&](const QString &key, double multiplier) {
@@ -251,6 +305,9 @@ void Theme::reload()
                                .match(QString::fromUtf8(process.readAllStandardOutput()));
         if (match.hasMatch()) m_radius = match.captured(1).toInt();
     }
+    bool radiusOverridden = false;
+    const int radiusOverride = qEnvironmentVariableIntValue("OMAREEL_THEME_RADIUS", &radiusOverridden);
+    if (radiusOverridden) m_radius = qMax(0, radiusOverride);
     rearmWatcher();
     emit changed();
 }

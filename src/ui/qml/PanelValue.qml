@@ -1,8 +1,10 @@
 import QtQuick
 
 Text {
-    color: theme.textMuted
-    font.family: theme.fontFamily
-    font.pixelSize: theme.font.caption
+    property bool live: false
+    color: live ? theme.accent : theme.textMuted
+    font.family: theme.monoFamily
+    font.pixelSize: theme.type.small
     horizontalAlignment: Text.AlignRight
+    Behavior on color { ColorAnimation { duration: 140 } }
 }

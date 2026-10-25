@@ -13,12 +13,58 @@
 #include <sstream>
 #include <stdexcept>
 #include <hyprutils/utils/ScopeGuard.hpp>
+#if defined(__aarch64__)
+#include "Arm64Hook.hpp"
+#endif
 
 namespace {
 constexpr auto VERSION = "0.1.0";
 HANDLE handle = nullptr;
-CFunctionHook* layerHook = nullptr;
-CFunctionHook* mirrorHook = nullptr;
+
+// Hyprland's function hooks only patch x86-64 code, so aarch64 uses the plugin's own.
+class RenderHook {
+  public:
+    bool install(void* source, void* destination) {
+#if defined(__aarch64__)
+        return m_hook.install(source, destination);
+#else
+        m_hook = HyprlandAPI::createFunctionHook(handle, source, destination);
+        return m_hook && m_hook->hook();
+#endif
+    }
+    void remove() {
+#if defined(__aarch64__)
+        m_hook.remove();
+#else
+        if (m_hook)
+            m_hook->unhook();
+        m_hook = nullptr;
+#endif
+    }
+    void* original() const {
+#if defined(__aarch64__)
+        return m_hook.original();
+#else
+        return m_hook->m_original;
+#endif
+    }
+    std::string error() const {
+#if defined(__aarch64__)
+        return m_hook.error();
+#else
+        return "Hyprland could not hook it";
+#endif
+    }
+
+  private:
+#if defined(__aarch64__)
+    Arm64Hook m_hook;
+#else
+    CFunctionHook* m_hook = nullptr;
+#endif
+};
+RenderHook layerHook;
+RenderHook mirrorHook;
 SP<SHyprCtlCommand> command;
 std::vector<std::string> prefixes{"omareel-"};
 using LayerFn = void (*)(Render::IHyprRenderer*, PHLLS, PHLMONITOR, const Time::steady_tp&, bool, bool);
@@ -46,7 +92,7 @@ void renderLayer(Render::IHyprRenderer* renderer, PHLLS layer, PHLMONITOR monito
     // m_fakeFrame is private in 0.56.2; snapshots on a captured monitor omit these layers too.
     if (matches(layer) && monitor && monitor->needsACopyFB())
         return;
-    reinterpret_cast<LayerFn>(layerHook->m_original)(renderer, layer, monitor, when, popups, lockscreen);
+    reinterpret_cast<LayerFn>(layerHook.original())(renderer, layer, monitor, when, popups, lockscreen);
 }
 
 void drawLayer(const PHLLS& layer, const PHLMONITOR& monitor, bool popups) {
@@ -92,7 +138,7 @@ void drawLayer(const PHLLS& layer, const PHLMONITOR& monitor, bool popups) {
 }
 
 bool saveMirror(Render::GL::CHyprOpenGLImpl* gl, const CBox& box) {
-    const bool result = reinterpret_cast<MirrorFn>(mirrorHook->m_original)(gl, box);
+    const bool result = reinterpret_cast<MirrorFn>(mirrorHook.original())(gl, box);
     const auto monitor = g_pHyprRenderer->m_renderData.pMonitor.lock();
     if (!monitor)
         return result;
@@ -177,12 +223,11 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE owner) {
     const auto mirrors = HyprlandAPI::findFunctionsByName(handle, "saveBufferForMirror");
     if (layers.size() != 1 || mirrors.size() != 1)
         throw std::runtime_error("omareel-capture-exclude: expected exactly one renderLayer and saveBufferForMirror symbol");
-    layerHook = HyprlandAPI::createFunctionHook(handle, layers[0].address, reinterpret_cast<void*>(renderLayer));
-    mirrorHook = HyprlandAPI::createFunctionHook(handle, mirrors[0].address, reinterpret_cast<void*>(saveMirror));
-    if (!layerHook || !mirrorHook || !layerHook->hook() || !mirrorHook->hook()) {
-        if (layerHook) layerHook->unhook();
-        if (mirrorHook) mirrorHook->unhook();
-        throw std::runtime_error("omareel-capture-exclude: could not install render hooks");
+    if (!layerHook.install(layers[0].address, reinterpret_cast<void*>(renderLayer)))
+        throw std::runtime_error("omareel-capture-exclude: could not hook renderLayer: " + layerHook.error());
+    if (!mirrorHook.install(mirrors[0].address, reinterpret_cast<void*>(saveMirror))) {
+        layerHook.remove();
+        throw std::runtime_error("omareel-capture-exclude: could not hook saveBufferForMirror: " + mirrorHook.error());
     }
     command = HyprlandAPI::registerHyprCtlCommand(handle, {"omareel-exclude", false,
         [](eHyprCtlOutputFormat, std::string request) {
@@ -198,17 +243,16 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE owner) {
             return std::string{"{\"error\":\"usage: omareel-exclude status | add <prefix> | remove <prefix>\"}"};
         }});
     if (!command) {
-        layerHook->unhook();
-        mirrorHook->unhook();
+        layerHook.remove();
+        mirrorHook.remove();
         throw std::runtime_error("omareel-capture-exclude: could not register status command");
     }
     return {"omareel-capture-exclude", "Display-only recording overlays", "Omareel", VERSION};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
-    if (layerHook) layerHook->unhook();
-    if (mirrorHook) mirrorHook->unhook();
+    layerHook.remove();
+    mirrorHook.remove();
     if (command) HyprlandAPI::unregisterHyprCtlCommand(handle, command);
     command.reset();
-    layerHook = mirrorHook = nullptr;
 }

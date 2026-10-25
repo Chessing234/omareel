@@ -11,16 +11,19 @@ ColumnLayout {
     required property real value
     property real stepSize: 0
     property int decimals: 0
-    spacing: theme.space.sm
+    property string suffix: ""
+    property real displayScale: 1
+    spacing: 4
     RowLayout {
         Layout.fillWidth: true
-        PanelLabel { text: root.label }
-        Item { Layout.fillWidth: true }
-        PanelValue { text: Number(root.value).toFixed(root.decimals) }
+        PanelLabel { text: root.label; Layout.fillWidth: true; enabled: root.enabled }
+        PanelValue { text: Number(root.value * root.displayScale).toFixed(root.decimals) + root.suffix; live: slider.pressed }
     }
     EditorSlider {
+        id: slider
         Layout.fillWidth: true
-        Layout.preferredHeight: 28
+        Layout.leftMargin: -7
+        Layout.rightMargin: -7
         from: root.from; to: root.to; value: root.value; stepSize: root.stepSize
         onPressedChanged: pressed ? editor.beginCoalescedEdit(root.path) : editor.endCoalescedEdit()
         onMoved: editor.setProjectValue(root.path, value, true)

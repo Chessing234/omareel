@@ -2,34 +2,34 @@ import QtQuick
 import QtQuick.Controls.impl
 import QtQuick.Layouts
 
-RowLayout {
+ColumnLayout {
     id: root
     property url iconSource
     property string title: ""
     property string meta: ""
     property Component trailingControl
-    spacing: theme.space.xxxl
-    implicitHeight: Math.max(theme.font.display, labels.implicitHeight)
-    Item {
-        Layout.preferredWidth: theme.font.display
-        Layout.preferredHeight: theme.font.display
-        IconImage {
-            anchors.fill: parent
-            source: root.iconSource
-            sourceSize: Qt.size(theme.font.display, theme.font.display)
-            color: theme.foreground
-        }
-    }
-    ColumnLayout {
-        id: labels
+    spacing: 3
+    RowLayout {
         Layout.fillWidth: true
-        spacing: theme.space.xxs
-        Text { text: root.title; color: theme.foreground; font.family: theme.fontFamily; font.pixelSize: theme.font.title; font.bold: true }
+        spacing: 8
         Text {
-            Layout.fillWidth: true; text: root.meta.toUpperCase(); elide: Text.ElideRight
-            color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.font.caption
-            font.bold: true; font.letterSpacing: 1.2
+            Layout.fillWidth: true
+            text: root.title
+            color: theme.textStrong
+            font.family: theme.fontFamily
+            font.pixelSize: theme.type.headline
+            font.weight: Font.DemiBold
+            elide: Text.ElideRight
         }
+        Loader { sourceComponent: root.trailingControl; Layout.alignment: Qt.AlignVCenter }
     }
-    Loader { sourceComponent: root.trailingControl; Layout.alignment: Qt.AlignVCenter }
+    Text {
+        Layout.fillWidth: true
+        visible: root.meta !== ""
+        text: root.meta
+        elide: Text.ElideRight
+        color: theme.textMuted
+        font.family: theme.fontFamily
+        font.pixelSize: theme.type.small
+    }
 }

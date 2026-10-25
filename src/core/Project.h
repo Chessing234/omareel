@@ -96,10 +96,13 @@ struct Camera {
     double radius = 16.0;
     bool flipHorizontal = false;
     int rotation = 0;
-    Shadow shadow{false, 0.55, 18.0, 18.0, 90.0};
-    Border border{false, 2.0, QColor(Qt::white), 0.7};
+    // The shadow falls down and to the right, at 45°.
+    Shadow shadow{true, 0.28, 23.0, 20.0, 45.0};
+    Border border{true, 6.0, QColor(Qt::white), 0.7};
     double scaleDuringZoom = 0.7;
-    QPointF offset{0.02, 0.02};
+    // Gap from the corner to the outside of the border, as a fraction of the canvas's shorter
+    // side, so both edges get the same gap at any aspect.
+    QPointF offset{0.035, 0.035};
     // How a clip with the camera layout shows the webcam: "fill" covers the whole canvas,
     // "square" keeps a centred square over a blurred copy of the camera.
     QString fullFrame = QStringLiteral("fill");
@@ -116,7 +119,7 @@ struct ExportSettings {
 class Project
 {
 public:
-    static constexpr int CurrentDefaultsVersion = 3;
+    static constexpr int CurrentDefaultsVersion = 4;
     static Project defaults(const QString &name = QStringLiteral("Untitled Recording"),
                             double duration = 0.0);
     static QJsonObject migrateDefaults(const QJsonObject &json, bool *changed = nullptr);
